@@ -14,5 +14,5 @@ export interface Invoice {
   lineItems: LineItem[];
   summary: string; // AI-generated summary
   uploadedAt: string; // ISO string date
-  invoiceDataUri?: string; // To store the base64 encoded file content
+  gcsFileUri?: string; // GCS URI for the stored invoice file (e.g., gs://bucket/path/to/file)
 }

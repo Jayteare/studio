@@ -3,16 +3,22 @@
 
 import { ObjectId } from 'mongodb';
 import { connectToDatabase } from '@/lib/mongodb';
+import { uploadFileToGCS } from '@/lib/gcs'; // Import GCS upload function
 import { extractInvoiceData, type ExtractInvoiceDataOutput } from '@/ai/flows/extract-invoice-data';
 import { summarizeInvoice, type SummarizeInvoiceOutput } from '@/ai/flows/summarize-invoice';
 import type { Invoice, LineItem } from '@/types/invoice';
 
-// Helper to convert File object from FormData to data URI
-async function fileToDataUri(file: File): Promise<string> {
+// Helper to convert File object to data URI and Buffer
+interface FileConversionResult {
+  dataUri: string;
+  buffer: Buffer;
+}
+async function prepareFileData(file: File): Promise<FileConversionResult> {
   const arrayBuffer = await file.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
   const base64String = buffer.toString('base64');
-  return `data:${file.type};base64,${base64String}`;
+  const dataUri = `data:${file.type};base64,${base64String}`;
+  return { dataUri, buffer };
 }
 
 export interface UploadInvoiceFormState {
@@ -48,10 +54,12 @@ export async function handleInvoiceUpload(
     return { error: `File is too large (${(file.size / (1024*1024)).toFixed(2)}MB). Maximum size is 10MB.` };
   }
   
-  let invoiceDataUri: string;
+  let fileData: FileConversionResult;
+  let gcsFileUri: string | undefined = undefined;
+
   try {
-    invoiceDataUri = await fileToDataUri(file);
-    const extractedData: ExtractInvoiceDataOutput = await extractInvoiceData({ invoiceDataUri });
+    fileData = await prepareFileData(file);
+    const extractedData: ExtractInvoiceDataOutput = await extractInvoiceData({ invoiceDataUri: fileData.dataUri });
 
     if (!extractedData || !extractedData.vendor || typeof extractedData.total === 'undefined') {
         console.error('Extraction failed or returned incomplete data:', extractedData);
@@ -69,6 +77,13 @@ export async function handleInvoiceUpload(
     };
     const summarizedData: SummarizeInvoiceOutput = await summarizeInvoice(summaryInput);
 
+    // Upload original file to GCS
+    // Generate a unique ID for the GCS file path part to avoid collisions if user uploads same filename
+    const uniqueFileIdForGCS = new ObjectId().toHexString();
+    const gcsDestinationPath = `invoices/${userIdString}/${uniqueFileIdForGCS}_${file.name}`;
+    gcsFileUri = await uploadFileToGCS(fileData.buffer, gcsDestinationPath, file.type);
+
+
     const { db } = await connectToDatabase();
     const invoiceDocumentForDb = {
       userId: new ObjectId(userIdString),
@@ -82,7 +97,7 @@ export async function handleInvoiceUpload(
       })), 
       summary: summarizedData.summary,
       uploadedAt: new Date(), 
-      invoiceDataUri: invoiceDataUri, // Store the data URI
+      gcsFileUri: gcsFileUri, // Store the GCS URI
     };
 
     const insertResult = await db.collection(INVOICES_COLLECTION).insertOne(invoiceDocumentForDb);
@@ -101,10 +116,13 @@ export async function handleInvoiceUpload(
       lineItems: extractedData.lineItems as LineItem[], 
       summary: summarizedData.summary,
       uploadedAt: invoiceDocumentForDb.uploadedAt.toISOString(),
-      invoiceDataUri: invoiceDataUri, // Include data URI in the returned object
+      gcsFileUri: gcsFileUri, // Include GCS URI in the returned object
     };
     
-    return { invoice: newInvoice, message: `Successfully processed and saved ${file.name}.` };
+    return { 
+        invoice: newInvoice, 
+        message: `Successfully processed ${file.name}. Data saved and file stored in Cloud Storage.` 
+    };
 
   } catch (error: any) {
     console.error('Error processing invoice:', error);
@@ -121,8 +139,10 @@ export async function handleInvoiceUpload(
         errorMessage = "The AI service could not process the file's format. Please ensure it's a clear PDF, JPG, or PNG.";
     } else if (errorMessage.includes('unparsable') || errorMessage.includes('malformed')) {
         errorMessage = 'The uploaded file appears to be corrupted or unreadable.';
+    } else if (errorMessage.includes('GCS Upload Error')) {
+        // Specific GCS error can be passed through or generalized
+        errorMessage = `Failed to store invoice file in Cloud Storage: ${error.message.replace('GCS Upload Error: ', '')}`;
     }
-
 
     return { error: errorMessage };
   }
@@ -146,10 +166,10 @@ export async function fetchUserInvoices(userId: string): Promise<FetchInvoicesRe
     const invoiceDocuments = await db
       .collection(INVOICES_COLLECTION)
       .find({ userId: userObjectId })
-      .sort({ uploadedAt: -1 }) // Fetch newest first
+      .sort({ uploadedAt: -1 }) 
       .toArray();
 
-    if (!invoiceDocuments) { // This condition might be redundant if .toArray() returns [] for no docs
+    if (!invoiceDocuments) { 
       return { invoices: [] };
     }
 
@@ -158,15 +178,15 @@ export async function fetchUserInvoices(userId: string): Promise<FetchInvoicesRe
       userId: doc.userId.toHexString(),
       fileName: doc.fileName,
       vendor: doc.vendor,
-      date: doc.date, // Stored as string
+      date: doc.date, 
       total: doc.total,
-      lineItems: doc.lineItems.map((item: any) => ({ // Ensure item is typed or asserted if necessary
+      lineItems: doc.lineItems.map((item: any) => ({ 
         description: item.description,
         amount: item.amount,
       })) as LineItem[],
       summary: doc.summary,
-      uploadedAt: doc.uploadedAt.toISOString(), // Convert Date object from DB to ISO string
-      invoiceDataUri: doc.invoiceDataUri,
+      uploadedAt: doc.uploadedAt.toISOString(), 
+      gcsFileUri: doc.gcsFileUri, // Ensure gcsFileUri is mapped
     }));
 
     return { invoices };
