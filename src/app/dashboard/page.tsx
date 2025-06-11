@@ -11,25 +11,46 @@ import { Button } from '@/components/ui/button';
 import { Loader2, LogOut } from 'lucide-react';
 import { AppLogo } from '@/components/app-logo';
 import { Separator } from '@/components/ui/separator';
+import { fetchUserInvoices, type FetchInvoicesResponse } from './actions';
+import { useToast } from '@/hooks/use-toast';
 
 export default function DashboardPage() {
   const { user, isAuthenticated, isLoading: authIsLoading, logout } = useAuth();
   const router = useRouter();
+  const { toast } = useToast();
   const [invoices, setInvoices] = useState<Invoice[]>([]);
-  const [clientIsLoading, setClientIsLoading] = useState(true);
+  const [invoicesLoading, setInvoicesLoading] = useState(true);
 
   useEffect(() => {
-    if (!authIsLoading) {
-      if (!isAuthenticated) {
-        router.replace('/login');
-      } else {
-        // Simulate fetching initial invoices or load from local storage if desired
-        // For now, starts with an empty list.
-        // TODO: Fetch invoices for the current user from MongoDB
-        setClientIsLoading(false);
-      }
+    if (!authIsLoading && !isAuthenticated) {
+      router.replace('/login');
     }
   }, [isAuthenticated, authIsLoading, router]);
+
+  useEffect(() => {
+    if (isAuthenticated && user?.id) {
+      const loadInvoices = async () => {
+        setInvoicesLoading(true);
+        const response: FetchInvoicesResponse = await fetchUserInvoices(user.id);
+        if (response.error) {
+          toast({
+            title: 'Error Fetching Invoices',
+            description: response.error,
+            variant: 'destructive',
+          });
+          setInvoices([]);
+        } else if (response.invoices) {
+          setInvoices(response.invoices);
+        }
+        setInvoicesLoading(false);
+      };
+      loadInvoices();
+    } else if (!authIsLoading && !isAuthenticated) {
+      // Not authenticated, clear invoices and stop loading
+      setInvoices([]);
+      setInvoicesLoading(false);
+    }
+  }, [isAuthenticated, user?.id, authIsLoading, toast]);
 
   const handleInvoiceUploaded = useCallback((newInvoice: Invoice) => {
     setInvoices((prevInvoices) => [newInvoice, ...prevInvoices]);
@@ -40,7 +61,7 @@ export default function DashboardPage() {
     // Navigation to /login is handled by logout() in auth-context
   };
 
-  if (authIsLoading || clientIsLoading) {
+  if (authIsLoading) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center bg-background p-4">
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
@@ -49,9 +70,10 @@ export default function DashboardPage() {
     );
   }
   
-  if (!isAuthenticated || !user) { // Added !user check for type safety
-     // This case should ideally be caught by the useEffect redirect,
-     // but as a fallback or if loading state logic changes:
+  // If auth is done loading and user is not authenticated, 
+  // the first useEffect should have redirected.
+  // This is a safeguard or covers the brief moment before redirect.
+  if (!isAuthenticated || !user) { 
     return (
        <div className="flex min-h-screen flex-col items-center justify-center bg-background p-4">
         <p className="text-lg text-muted-foreground">Redirecting to login...</p>
@@ -90,7 +112,14 @@ export default function DashboardPage() {
         <Separator className="my-8" />
 
         <section>
-          <InvoiceList invoices={invoices} />
+          {invoicesLoading ? (
+            <div className="flex flex-col items-center justify-center py-10">
+              <Loader2 className="h-10 w-10 animate-spin text-primary" />
+              <p className="mt-4 text-muted-foreground">Loading your invoices...</p>
+            </div>
+          ) : (
+            <InvoiceList invoices={invoices} />
+          )}
         </section>
       </main>
 

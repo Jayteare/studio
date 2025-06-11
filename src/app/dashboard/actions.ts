@@ -127,3 +127,55 @@ export async function handleInvoiceUpload(
     return { error: errorMessage };
   }
 }
+
+
+export interface FetchInvoicesResponse {
+  invoices?: Invoice[];
+  error?: string;
+}
+
+export async function fetchUserInvoices(userId: string): Promise<FetchInvoicesResponse> {
+  if (!userId) {
+    return { error: 'User ID is required to fetch invoices.' };
+  }
+
+  try {
+    const { db } = await connectToDatabase();
+    const userObjectId = new ObjectId(userId);
+
+    const invoiceDocuments = await db
+      .collection(INVOICES_COLLECTION)
+      .find({ userId: userObjectId })
+      .sort({ uploadedAt: -1 }) // Fetch newest first
+      .toArray();
+
+    if (!invoiceDocuments) { // This condition might be redundant if .toArray() returns [] for no docs
+      return { invoices: [] };
+    }
+
+    const invoices: Invoice[] = invoiceDocuments.map((doc) => ({
+      id: doc._id.toHexString(),
+      userId: doc.userId.toHexString(),
+      fileName: doc.fileName,
+      vendor: doc.vendor,
+      date: doc.date, // Stored as string
+      total: doc.total,
+      lineItems: doc.lineItems.map((item: any) => ({ // Ensure item is typed or asserted if necessary
+        description: item.description,
+        amount: item.amount,
+      })) as LineItem[],
+      summary: doc.summary,
+      uploadedAt: doc.uploadedAt.toISOString(), // Convert Date object from DB to ISO string
+      invoiceDataUri: doc.invoiceDataUri,
+    }));
+
+    return { invoices };
+  } catch (error: any) {
+    console.error('Error fetching invoices:', error);
+    let errorMessage = 'An unexpected error occurred while fetching invoices.';
+    if (error.name === 'BSONError' && error.message.includes('input must be a 24 character hex string')) {
+      errorMessage = 'Invalid User ID format for fetching invoices.';
+    }
+    return { error: errorMessage };
+  }
+}
