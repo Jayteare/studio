@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useRef } from 'react';
-import { useFormState, useFormStatus } from 'react-dom';
+import { useEffect, useRef, useActionState } from 'react';
+import { useFormStatus } from 'react-dom';
 import { handleInvoiceUpload, type UploadInvoiceFormState } from '@/app/dashboard/actions';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -35,7 +35,7 @@ function SubmitButton() {
 
 export function InvoiceUploadForm({ onInvoiceUploaded }: InvoiceUploadFormProps) {
   const initialState: UploadInvoiceFormState | undefined = undefined;
-  const [state, formAction] = useFormState(handleInvoiceUpload, initialState);
+  const [state, formAction] = useActionState(handleInvoiceUpload, initialState);
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
