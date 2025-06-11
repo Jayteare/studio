@@ -48,8 +48,9 @@ export async function handleInvoiceUpload(
     return { error: `File is too large (${(file.size / (1024*1024)).toFixed(2)}MB). Maximum size is 10MB.` };
   }
   
+  let invoiceDataUri: string;
   try {
-    const invoiceDataUri = await fileToDataUri(file);
+    invoiceDataUri = await fileToDataUri(file);
     const extractedData: ExtractInvoiceDataOutput = await extractInvoiceData({ invoiceDataUri });
 
     if (!extractedData || !extractedData.vendor || typeof extractedData.total === 'undefined') {
@@ -73,14 +74,15 @@ export async function handleInvoiceUpload(
       userId: new ObjectId(userIdString),
       fileName: file.name,
       vendor: extractedData.vendor,
-      date: extractedData.date, // Storing as string from AI, consider converting to BSON Date if consistency is needed
+      date: extractedData.date, 
       total: extractedData.total,
       lineItems: extractedData.lineItems.map(item => ({
         description: item.description,
         amount: item.amount,
-      })), // Ensure LineItem structure matches
+      })), 
       summary: summarizedData.summary,
-      uploadedAt: new Date(), // BSON Date for upload timestamp
+      uploadedAt: new Date(), 
+      invoiceDataUri: invoiceDataUri, // Store the data URI
     };
 
     const insertResult = await db.collection(INVOICES_COLLECTION).insertOne(invoiceDocumentForDb);
@@ -90,15 +92,16 @@ export async function handleInvoiceUpload(
     }
 
     const newInvoice: Invoice = {
-      id: insertResult.insertedId.toHexString(), // Use MongoDB's _id as the invoice id
+      id: insertResult.insertedId.toHexString(), 
       userId: userIdString, 
       fileName: file.name,
       vendor: extractedData.vendor,
       date: extractedData.date, 
       total: extractedData.total,
-      lineItems: extractedData.lineItems as LineItem[], // Cast to LineItem[]
+      lineItems: extractedData.lineItems as LineItem[], 
       summary: summarizedData.summary,
-      uploadedAt: invoiceDocumentForDb.uploadedAt.toISOString(), // Convert BSON Date to ISO string for client
+      uploadedAt: invoiceDocumentForDb.uploadedAt.toISOString(),
+      invoiceDataUri: invoiceDataUri, // Include data URI in the returned object
     };
     
     return { invoice: newInvoice, message: `Successfully processed and saved ${file.name}.` };
