@@ -25,6 +25,7 @@ export default function DashboardPage() {
       } else {
         // Simulate fetching initial invoices or load from local storage if desired
         // For now, starts with an empty list.
+        // TODO: Fetch invoices for the current user from MongoDB
         setClientIsLoading(false);
       }
     }
@@ -48,7 +49,7 @@ export default function DashboardPage() {
     );
   }
   
-  if (!isAuthenticated) {
+  if (!isAuthenticated || !user) { // Added !user check for type safety
      // This case should ideally be caught by the useEffect redirect,
      // but as a fallback or if loading state logic changes:
     return (
@@ -80,7 +81,10 @@ export default function DashboardPage() {
 
       <main className="flex-1 container mx-auto max-w-5xl p-4 md:p-8">
         <section className="mb-12">
-          <InvoiceUploadForm onInvoiceUploaded={handleInvoiceUploaded} />
+          <InvoiceUploadForm 
+            onInvoiceUploaded={handleInvoiceUploaded} 
+            userId={user.id} 
+          />
         </section>
         
         <Separator className="my-8" />

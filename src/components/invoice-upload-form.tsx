@@ -1,7 +1,8 @@
+
 "use client";
 
-import { useEffect, useRef, useActionState } from 'react';
-import { useFormStatus } from 'react-dom';
+import { useEffect, useRef } from 'react';
+import { useActionState, useFormStatus } from 'react-dom';
 import { handleInvoiceUpload, type UploadInvoiceFormState } from '@/app/dashboard/actions';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -9,9 +10,11 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Loader2, UploadCloud, FileUp } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import type { Invoice } from '@/types/invoice'; // Invoice type for onInvoiceUploaded
 
 interface InvoiceUploadFormProps {
-  onInvoiceUploaded: (invoice: any) => void;
+  onInvoiceUploaded: (invoice: Invoice) => void; // Use specific Invoice type
+  userId: string;
 }
 
 function SubmitButton() {
@@ -33,7 +36,7 @@ function SubmitButton() {
   );
 }
 
-export function InvoiceUploadForm({ onInvoiceUploaded }: InvoiceUploadFormProps) {
+export function InvoiceUploadForm({ onInvoiceUploaded, userId }: InvoiceUploadFormProps) {
   const initialState: UploadInvoiceFormState | undefined = undefined;
   const [state, formAction] = useActionState(handleInvoiceUpload, initialState);
   const { toast } = useToast();
@@ -51,7 +54,7 @@ export function InvoiceUploadForm({ onInvoiceUploaded }: InvoiceUploadFormProps)
       toast({
         title: 'Upload Successful',
         description: state.message || `${state.invoice.fileName} processed.`,
-        variant: 'default',
+        variant: 'default', // Keep default for success
       });
       onInvoiceUploaded(state.invoice);
       if (fileInputRef.current) {
@@ -73,6 +76,7 @@ export function InvoiceUploadForm({ onInvoiceUploaded }: InvoiceUploadFormProps)
       </CardHeader>
       <CardContent>
         <form action={formAction} className="space-y-6">
+          <input type="hidden" name="userId" value={userId} />
           <div className="space-y-2">
             <Label htmlFor="invoiceFile" className="text-base">Invoice File</Label>
             <Input
