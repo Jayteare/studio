@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useEffect, useCallback } from 'react';
@@ -66,7 +67,7 @@ export default function DashboardPage() {
           <div className="flex items-center gap-4">
             {user && (
               <span className="text-sm text-muted-foreground hidden sm:inline">
-                Welcome, {user.displayName || user.email}!
+                Welcome, {user.name || user.email}!
               </span>
             )}
             <Button variant="outline" size="sm" onClick={handleLogout} disabled={authIsLoading}>

@@ -1,78 +1,101 @@
+
 "use client";
 
-import type { User as FirebaseUser } from 'firebase/auth'; // Using FirebaseUser for type consistency if real Firebase is added later
-import React, { createContext, useState, useEffect, ReactNode, useCallback } from 'react';
+import React, { createContext, useState, useEffect, ReactNode, useCallback }_from 'react';
 import { useRouter } from 'next/navigation';
+import { loginUser, registerUser, type AuthUser, type AuthResponse } from '@/app/auth/actions';
+import { useToast } from '@/hooks/use-toast';
 
-interface MockUser extends Pick<FirebaseUser, 'uid' | 'email' | 'displayName'> {}
+interface ContextUser extends AuthUser {}
 
 interface AuthContextType {
-  user: MockUser | null;
+  user: ContextUser | null;
   isAuthenticated: boolean;
   isLoading: boolean;
-  login: (email?: string, password?: string) => Promise<void>;
+  login: (email: string, passwordInput: string) => Promise<void>;
+  register: (name: string, email: string, passwordInput: string) => Promise<void>;
   logout: () => Promise<void>;
 }
 
 export const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+const USER_STORAGE_KEY = 'authUser_invoice_insights';
+
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
-  const [user, setUser] = useState<MockUser | null>(null);
-  const [isLoading, setIsLoading] = useState(true); // Start true to check initial auth state
+  const [user, setUser] = useState<ContextUser | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
   const router = useRouter();
+  const { toast } = useToast();
 
   useEffect(() => {
-    // Simulate checking auth state from localStorage
     try {
-      const storedAuth = localStorage.getItem('isAuthenticated_invoice_insights');
-      const storedUser = localStorage.getItem('user_invoice_insights');
-      if (storedAuth === 'true' && storedUser) {
+      const storedUser = localStorage.getItem(USER_STORAGE_KEY);
+      if (storedUser) {
         setUser(JSON.parse(storedUser));
       }
     } catch (error) {
-      console.error("Error reading from localStorage", error);
-      // Handle potential errors, e.g. if localStorage is disabled or data is corrupted
+      console.error("Error reading user from localStorage", error);
+      localStorage.removeItem(USER_STORAGE_KEY); // Clear potentially corrupted data
     }
     setIsLoading(false);
   }, []);
 
-  const login = useCallback(async (email?: string, password?: string) => {
+  const handleAuthResponse = useCallback((response: AuthResponse, successRedirect: string = '/dashboard') => {
+    if (response.error) {
+      toast({ title: 'Authentication Failed', description: response.error, variant: 'destructive' });
+      return false;
+    }
+    if (response.user) {
+      setUser(response.user);
+      try {
+        localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(response.user));
+      } catch (error) {
+        console.error("Error writing user to localStorage", error);
+      }
+      toast({ title: 'Success', description: response.message || 'Action successful!', variant: 'default' });
+      router.push(successRedirect);
+      return true;
+    }
+    return false;
+  }, [router, toast]);
+
+  const login = useCallback(async (email: string, passwordInput: string) => {
     setIsLoading(true);
-    await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate API delay
-    const mockUserData: MockUser = { 
-      uid: 'mock-user-id-' + Date.now(), 
-      email: email || 'user@example.com', 
-      displayName: 'Mock User' 
-    };
-    setUser(mockUserData);
-    try {
-      localStorage.setItem('isAuthenticated_invoice_insights', 'true');
-      localStorage.setItem('user_invoice_insights', JSON.stringify(mockUserData));
-    } catch (error) {
-      console.error("Error writing to localStorage", error);
+    const response = await loginUser(email, passwordInput);
+    handleAuthResponse(response);
+    setIsLoading(false);
+  }, [handleAuthResponse]);
+
+  const register = useCallback(async (name: string, email: string, passwordInput: string) => {
+    setIsLoading(true);
+    const response = await registerUser(name, email, passwordInput);
+    // On successful registration, typically log the user in or redirect to login
+    // For this implementation, successful registration will log the user in.
+    if (handleAuthResponse(response)) {
+        // User is set and redirected by handleAuthResponse
     }
     setIsLoading(false);
-    router.push('/dashboard');
-  }, [router]);
+  }, [handleAuthResponse]);
 
   const logout = useCallback(async () => {
     setIsLoading(true);
-    await new Promise(resolve => setTimeout(resolve, 500)); // Simulate API delay
     setUser(null);
     try {
-      localStorage.setItem('isAuthenticated_invoice_insights', 'false');
-      localStorage.removeItem('user_invoice_insights');
+      localStorage.removeItem(USER_STORAGE_KEY);
     } catch (error) {
-      console.error("Error clearing localStorage", error);
+      console.error("Error clearing user from localStorage", error);
     }
+    // Simulate any server-side logout if necessary (e.g., invalidating a token)
+    await new Promise(resolve => setTimeout(resolve, 300)); 
     setIsLoading(false);
     router.push('/login');
-  }, [router]);
+    toast({ title: 'Logged Out', description: 'You have been successfully logged out.' });
+  }, [router, toast]);
 
   const isAuthenticated = !!user;
 
   return (
-    <AuthContext.Provider value={{ user, isAuthenticated, isLoading, login, logout }}>
+    <AuthContext.Provider value={{ user, isAuthenticated, isLoading, login, register, logout }}>
       {children}
     </AuthContext.Provider>
   );
