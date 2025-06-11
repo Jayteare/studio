@@ -78,7 +78,6 @@ export async function handleInvoiceUpload(
     const summarizedData: SummarizeInvoiceOutput = await summarizeInvoice(summaryInput);
 
     // Upload original file to GCS
-    // Generate a unique ID for the GCS file path part to avoid collisions if user uploads same filename
     const uniqueFileIdForGCS = new ObjectId().toHexString();
     const gcsDestinationPath = `invoices/${userIdString}/${uniqueFileIdForGCS}_${file.name}`;
     gcsFileUri = await uploadFileToGCS(fileData.buffer, gcsDestinationPath, file.type);
@@ -97,7 +96,9 @@ export async function handleInvoiceUpload(
       })), 
       summary: summarizedData.summary,
       uploadedAt: new Date(), 
-      gcsFileUri: gcsFileUri, // Store the GCS URI
+      gcsFileUri: gcsFileUri,
+      isDeleted: false, // Initialize as not deleted
+      deletedAt: null,
     };
 
     const insertResult = await db.collection(INVOICES_COLLECTION).insertOne(invoiceDocumentForDb);
@@ -116,7 +117,8 @@ export async function handleInvoiceUpload(
       lineItems: extractedData.lineItems as LineItem[], 
       summary: summarizedData.summary,
       uploadedAt: invoiceDocumentForDb.uploadedAt.toISOString(),
-      gcsFileUri: gcsFileUri, // Include GCS URI in the returned object
+      gcsFileUri: gcsFileUri, 
+      isDeleted: false,
     };
     
     return { 
@@ -140,7 +142,6 @@ export async function handleInvoiceUpload(
     } else if (errorMessage.includes('unparsable') || errorMessage.includes('malformed')) {
         errorMessage = 'The uploaded file appears to be corrupted or unreadable.';
     } else if (errorMessage.includes('GCS Upload Error')) {
-        // Specific GCS error can be passed through or generalized
         errorMessage = `Failed to store invoice file in Cloud Storage: ${error.message.replace('GCS Upload Error: ', '')}`;
     }
 
@@ -165,7 +166,10 @@ export async function fetchUserInvoices(userId: string): Promise<FetchInvoicesRe
 
     const invoiceDocuments = await db
       .collection(INVOICES_COLLECTION)
-      .find({ userId: userObjectId })
+      .find({ 
+        userId: userObjectId,
+        isDeleted: { $ne: true } // Only fetch non-deleted invoices
+      })
       .sort({ uploadedAt: -1 }) 
       .toArray();
 
@@ -186,7 +190,9 @@ export async function fetchUserInvoices(userId: string): Promise<FetchInvoicesRe
       })) as LineItem[],
       summary: doc.summary,
       uploadedAt: doc.uploadedAt.toISOString(), 
-      gcsFileUri: doc.gcsFileUri, // Ensure gcsFileUri is mapped
+      gcsFileUri: doc.gcsFileUri,
+      isDeleted: doc.isDeleted,
+      deletedAt: doc.deletedAt ? doc.deletedAt.toISOString() : undefined,
     }));
 
     return { invoices };
@@ -195,6 +201,49 @@ export async function fetchUserInvoices(userId: string): Promise<FetchInvoicesRe
     let errorMessage = 'An unexpected error occurred while fetching invoices.';
     if (error.name === 'BSONError' && error.message.includes('input must be a 24 character hex string')) {
       errorMessage = 'Invalid User ID format for fetching invoices.';
+    }
+    return { error: errorMessage };
+  }
+}
+
+export interface SoftDeleteResponse {
+  success?: boolean;
+  error?: string;
+  deletedInvoiceId?: string;
+}
+
+export async function softDeleteInvoice(invoiceId: string, userId: string): Promise<SoftDeleteResponse> {
+  if (!userId) {
+    return { error: 'User ID is required to delete an invoice.' };
+  }
+  if (!invoiceId) {
+    return { error: 'Invoice ID is required to delete an invoice.' };
+  }
+
+  try {
+    const { db } = await connectToDatabase();
+    const userObjectId = new ObjectId(userId);
+    const invoiceObjectId = new ObjectId(invoiceId);
+
+    const result = await db.collection(INVOICES_COLLECTION).updateOne(
+      { _id: invoiceObjectId, userId: userObjectId },
+      { $set: { isDeleted: true, deletedAt: new Date() } }
+    );
+
+    if (result.matchedCount === 0) {
+      return { error: 'Invoice not found or user not authorized to delete.' };
+    }
+    if (result.modifiedCount === 0) {
+      // This might happen if the invoice was already marked as deleted
+      return { error: 'Invoice was not modified. It might already be deleted.' };
+    }
+
+    return { success: true, deletedInvoiceId: invoiceId };
+  } catch (error: any) {
+    console.error('Error soft deleting invoice:', error);
+    let errorMessage = 'An unexpected error occurred while deleting the invoice.';
+     if (error.name === 'BSONError' && (error.message.includes('invoiceId') || error.message.includes('userId'))) {
+      errorMessage = 'Invalid ID format for invoice or user.';
     }
     return { error: errorMessage };
   }

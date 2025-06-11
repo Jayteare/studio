@@ -1,3 +1,4 @@
+
 "use client";
 
 import type { Invoice } from '@/types/invoice';
@@ -13,35 +14,32 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
-import { FileText, CalendarDays, CircleDollarSign, MessageSquareText, Info } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { FileText, CalendarDays, CircleDollarSign, MessageSquareText, Info, Trash2, Settings } from 'lucide-react';
 import { format } from 'date-fns';
 
 interface InvoiceListProps {
   invoices: Invoice[];
+  onDeleteInvoice: (invoice: Invoice) => void;
 }
 
-export function InvoiceList({ invoices }: InvoiceListProps) {
+export function InvoiceList({ invoices, onDeleteInvoice }: InvoiceListProps) {
   const formatDate = (dateString: string) => {
     try {
-      // Attempt to parse the date. If it's already a simple date like "MM/DD/YYYY", it might pass.
-      // For more robust parsing, especially with varied formats from AI, a library like date-fns-tz might be needed.
       const date = new Date(dateString);
-      if (isNaN(date.getTime())) { // Check if date is valid
-        // If parsing fails, return original string or a placeholder
-        // The AI might return dates in various formats. Let's try to make YYYY-MM-DD or MM/DD/YYYY work.
+      if (isNaN(date.getTime())) { 
         const parts = dateString.match(/(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})/);
         if(parts) {
-            // Assuming MM/DD/YYYY or MM-DD-YYYY format
             let year = parseInt(parts[3]);
-            if (year < 100) year += 2000; // handle YY format
+            if (year < 100) year += 2000;
             return format(new Date(year, parseInt(parts[1])-1, parseInt(parts[2])), 'MMM dd, yyyy');
         }
-        return dateString; // Fallback to original string if parsing fails
+        return dateString;
       }
       return format(date, 'MMM dd, yyyy');
     } catch (error) {
       console.warn(`Could not parse date: ${dateString}`);
-      return dateString; // Fallback for unparseable dates
+      return dateString;
     }
   };
 
@@ -99,6 +97,11 @@ export function InvoiceList({ invoices }: InvoiceListProps) {
                   </div>
                 </TableHead>
                  <TableHead className="w-[150px]">Uploaded</TableHead>
+                 <TableHead className="w-[100px] text-center">
+                    <div className="flex items-center justify-center gap-2">
+                        <Settings className="h-4 w-4" /> Actions
+                    </div>
+                 </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -112,6 +115,17 @@ export function InvoiceList({ invoices }: InvoiceListProps) {
                   </TableCell>
                   <TableCell>
                     <Badge variant="outline">{format(new Date(invoice.uploadedAt), 'MMM dd, yyyy')}</Badge>
+                  </TableCell>
+                  <TableCell className="text-center">
+                    <Button 
+                      variant="ghost" 
+                      size="icon" 
+                      onClick={() => onDeleteInvoice(invoice)}
+                      aria-label="Delete invoice"
+                      className="text-destructive hover:text-destructive/80"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
                   </TableCell>
                 </TableRow>
               ))}
