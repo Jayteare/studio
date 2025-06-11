@@ -1,7 +1,11 @@
+
 import { MongoClient, Db } from 'mongodb';
 
 const MONGODB_URI = process.env.MONGODB_URI;
 const MONGODB_DB_NAME = process.env.MONGODB_DB_NAME;
+
+console.log('MongoDB Connector: MONGODB_URI loaded -', MONGODB_URI ? 'Yes' : 'No');
+console.log('MongoDB Connector: MONGODB_DB_NAME loaded -', MONGODB_DB_NAME ? 'Yes' : 'No');
 
 if (!MONGODB_URI) {
   throw new Error(
@@ -38,9 +42,11 @@ export async function connectToDatabase(): Promise<{ client: MongoClient; db: Db
     cachedClient = client;
     cachedDb = db;
 
+    console.log('Successfully connected to MongoDB and database:', MONGODB_DB_NAME);
     return { client, db };
   } catch (error) {
-    console.error('Failed to connect to MongoDB', error);
-    throw new Error('Could not connect to database.');
+    console.error('Failed to connect to MongoDB. URI used:', MONGODB_URI, 'DB Name:', MONGODB_DB_NAME);
+    console.error('Detailed connection error:', error);
+    throw new Error('Could not connect to database. Check server logs for details.');
   }
 }
