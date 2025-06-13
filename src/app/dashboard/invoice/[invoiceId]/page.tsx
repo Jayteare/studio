@@ -15,6 +15,7 @@ import { format } from 'date-fns';
 import Link from 'next/link';
 import { AppLogo } from '@/components/app-logo';
 import { useToast } from '@/hooks/use-toast';
+import { cn } from '@/lib/utils'; // Added import for cn
 
 export default function InvoiceDetailPage() {
   const router = useRouter();
@@ -240,3 +241,4 @@ const Label: React.FC<React.HTMLAttributes<HTMLLabelElement>> = ({ className, ch
     {children}
   </label>
 );
+
