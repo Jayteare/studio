@@ -3,7 +3,7 @@
 
 import { ObjectId } from 'mongodb';
 import { connectToDatabase } from '@/lib/mongodb';
-import { uploadFileToGCS } from '@/lib/gcs'; // Import GCS upload function
+import { uploadFileToGCS } from '@/lib/gcs'; 
 import { extractInvoiceData, type ExtractInvoiceDataOutput } from '@/ai/flows/extract-invoice-data';
 import { summarizeInvoice, type SummarizeInvoiceOutput } from '@/ai/flows/summarize-invoice';
 import type { Invoice, LineItem } from '@/types/invoice';
@@ -24,7 +24,7 @@ async function prepareFileData(file: File): Promise<FileConversionResult> {
 export interface UploadInvoiceFormState {
   invoice?: Invoice;
   error?: string;
-  message?: string; // For general messages
+  message?: string; 
 }
 
 const INVOICES_COLLECTION = 'uploaded_invoices';
@@ -77,11 +77,9 @@ export async function handleInvoiceUpload(
     };
     const summarizedData: SummarizeInvoiceOutput = await summarizeInvoice(summaryInput);
 
-    // Upload original file to GCS
     const uniqueFileIdForGCS = new ObjectId().toHexString();
     const gcsDestinationPath = `invoices/${userIdString}/${uniqueFileIdForGCS}_${file.name}`;
     gcsFileUri = await uploadFileToGCS(fileData.buffer, gcsDestinationPath, file.type);
-
 
     const { db } = await connectToDatabase();
     const invoiceDocumentForDb = {
@@ -97,7 +95,7 @@ export async function handleInvoiceUpload(
       summary: summarizedData.summary,
       uploadedAt: new Date(), 
       gcsFileUri: gcsFileUri,
-      isDeleted: false, // Initialize as not deleted
+      isDeleted: false, 
       deletedAt: null,
     };
 
@@ -141,8 +139,8 @@ export async function handleInvoiceUpload(
         errorMessage = "The AI service could not process the file's format. Please ensure it's a clear PDF, JPG, or PNG.";
     } else if (errorMessage.includes('unparsable') || errorMessage.includes('malformed')) {
         errorMessage = 'The uploaded file appears to be corrupted or unreadable.';
-    } else if (errorMessage.includes('GCS Upload Error')) {
-        errorMessage = `Failed to store invoice file in Cloud Storage: ${error.message.replace('GCS UploadError: ', '')}`;
+    } else if (errorMessage.includes('GCS Upload Error') || (error.message && error.message.startsWith('GCS Upload Error'))) {
+        errorMessage = `Failed to store invoice file in Cloud Storage: ${error.message.replace('GCS Upload Error: ', '')}`;
     }
 
     return { error: errorMessage };
@@ -179,25 +177,18 @@ export async function fetchUserInvoices(userId: string): Promise<FetchInvoicesRe
       .sort({ uploadedAt: -1 }) 
       .toArray();
 
-    // toArray() returns an empty array if no documents match, not null or undefined.
-    // So, if invoiceDocuments is an empty array, the map will correctly produce an empty invoices array.
 
     const invoices: Invoice[] = invoiceDocuments.map((doc) => {
       let uploadedAtISO: string;
       if (doc.uploadedAt instanceof Date) {
         uploadedAtISO = doc.uploadedAt.toISOString();
       } else if (typeof doc.uploadedAt === 'string') {
-        // Attempt to parse if it's a string, otherwise fallback or log error
         const parsedDate = new Date(doc.uploadedAt);
-        if (!isNaN(parsedDate.getTime())) {
-          uploadedAtISO = parsedDate.toISOString();
-        } else {
-          console.warn(`Invalid uploadedAt date format for invoice ID ${doc._id}: ${doc.uploadedAt}`);
-          uploadedAtISO = new Date(0).toISOString(); // Fallback to epoch or handle as needed
-        }
+        uploadedAtISO = !isNaN(parsedDate.getTime()) ? parsedDate.toISOString() : new Date(0).toISOString();
+        if (isNaN(parsedDate.getTime())) console.warn(`Invalid uploadedAt date format for invoice ID ${doc._id}: ${doc.uploadedAt}`);
       } else {
         console.warn(`Missing or invalid uploadedAt for invoice ID ${doc._id}`);
-        uploadedAtISO = new Date(0).toISOString(); // Fallback
+        uploadedAtISO = new Date(0).toISOString(); 
       }
 
       let deletedAtISO: string | undefined = undefined;
@@ -205,17 +196,14 @@ export async function fetchUserInvoices(userId: string): Promise<FetchInvoicesRe
         deletedAtISO = doc.deletedAt.toISOString();
       } else if (typeof doc.deletedAt === 'string') {
         const parsedDate = new Date(doc.deletedAt);
-        if (!isNaN(parsedDate.getTime())) {
-          deletedAtISO = parsedDate.toISOString();
-        } else {
-           console.warn(`Invalid deletedAt date format for invoice ID ${doc._id}: ${doc.deletedAt}`);
-        }
+        deletedAtISO = !isNaN(parsedDate.getTime()) ? parsedDate.toISOString() : undefined;
+        if (isNaN(parsedDate.getTime())) console.warn(`Invalid deletedAt date format for invoice ID ${doc._id}: ${doc.deletedAt}`);
       } else if (doc.deletedAt) {
          console.warn(`Invalid deletedAt type for invoice ID ${doc._id}: ${typeof doc.deletedAt}`);
       }
       
       const lineItems: LineItem[] = Array.isArray(doc.lineItems) ? doc.lineItems.map((item: any) => ({ 
-        description: item.description || 'N/A', // Provide fallback for item properties
+        description: item.description || 'N/A', 
         amount: typeof item.amount === 'number' ? item.amount : 0,
       })) : [];
       if (!Array.isArray(doc.lineItems)) {
@@ -233,7 +221,7 @@ export async function fetchUserInvoices(userId: string): Promise<FetchInvoicesRe
         summary: doc.summary || 'No summary available.',
         uploadedAt: uploadedAtISO, 
         gcsFileUri: doc.gcsFileUri,
-        isDeleted: !!doc.isDeleted, // Ensure boolean
+        isDeleted: !!doc.isDeleted, 
         deletedAt: deletedAtISO,
       };
     });
@@ -245,7 +233,6 @@ export async function fetchUserInvoices(userId: string): Promise<FetchInvoicesRe
     if (error.name === 'BSONError' && error.message.includes('input must be a 24 character hex string')) {
       errorMessage = 'Invalid User ID format for fetching invoices.';
     } else if (error.message) {
-        // Try to provide a more specific message if available
         errorMessage = `Failed to fetch invoices: ${error.message}`;
     }
     return { error: errorMessage };
@@ -280,7 +267,6 @@ export async function softDeleteInvoice(invoiceId: string, userId: string): Prom
       return { error: 'Invoice not found or user not authorized to delete.' };
     }
     if (result.modifiedCount === 0) {
-      // This might happen if the invoice was already marked as deleted
       return { error: 'Invoice was not modified. It might already be deleted.' };
     }
 
@@ -288,10 +274,107 @@ export async function softDeleteInvoice(invoiceId: string, userId: string): Prom
   } catch (error: any) {
     console.error('Error soft deleting invoice:', error.message, error.stack, error);
     let errorMessage = 'An unexpected error occurred while deleting the invoice.';
-     if (error.name === 'BSONError') { // More general BSONError check
+     if (error.name === 'BSONError') { 
       errorMessage = 'Invalid ID format for invoice or user during delete.';
     } else if (error.message) {
         errorMessage = `Failed to delete invoice: ${error.message}`;
+    }
+    return { error: errorMessage };
+  }
+}
+
+
+export interface FetchInvoiceByIdResponse {
+  invoice?: Invoice;
+  error?: string;
+}
+
+export async function fetchInvoiceById(invoiceId: string, userId: string): Promise<FetchInvoiceByIdResponse> {
+  if (!userId) {
+    return { error: 'User ID is required to fetch an invoice.' };
+  }
+  if (!invoiceId) {
+    return { error: 'Invoice ID is required to fetch an invoice.' };
+  }
+
+  try {
+    const { db } = await connectToDatabase();
+    let userObjectId;
+    let invoiceObjectId;
+
+    try {
+      userObjectId = new ObjectId(userId);
+      invoiceObjectId = new ObjectId(invoiceId);
+    } catch (e) {
+      console.error('Error creating ObjectId in fetchInvoiceById:', e);
+      return { error: 'Invalid User ID or Invoice ID format provided.' };
+    }
+
+    const doc = await db.collection(INVOICES_COLLECTION).findOne({
+      _id: invoiceObjectId,
+      userId: userObjectId,
+      isDeleted: { $ne: true } // Optionally, only fetch non-deleted invoices
+    });
+
+    if (!doc) {
+      return { error: 'Invoice not found or you do not have permission to view it.' };
+    }
+    
+    let uploadedAtISO: string;
+    if (doc.uploadedAt instanceof Date) {
+      uploadedAtISO = doc.uploadedAt.toISOString();
+    } else if (typeof doc.uploadedAt === 'string') {
+      const parsedDate = new Date(doc.uploadedAt);
+      uploadedAtISO = !isNaN(parsedDate.getTime()) ? parsedDate.toISOString() : new Date(0).toISOString();
+      if (isNaN(parsedDate.getTime())) console.warn(`Invalid uploadedAt date format for invoice ID ${doc._id}: ${doc.uploadedAt}`);
+    } else {
+      console.warn(`Missing or invalid uploadedAt for invoice ID ${doc._id}`);
+      uploadedAtISO = new Date(0).toISOString(); 
+    }
+
+    let deletedAtISO: string | undefined = undefined;
+    if (doc.deletedAt instanceof Date) {
+      deletedAtISO = doc.deletedAt.toISOString();
+    } else if (typeof doc.deletedAt === 'string') {
+      const parsedDate = new Date(doc.deletedAt);
+      deletedAtISO = !isNaN(parsedDate.getTime()) ? parsedDate.toISOString() : undefined;
+      if (isNaN(parsedDate.getTime())) console.warn(`Invalid deletedAt date format for invoice ID ${doc._id}: ${doc.deletedAt}`);
+    } else if (doc.deletedAt) {
+        console.warn(`Invalid deletedAt type for invoice ID ${doc._id}: ${typeof doc.deletedAt}`);
+    }
+      
+    const lineItems: LineItem[] = Array.isArray(doc.lineItems) ? doc.lineItems.map((item: any) => ({ 
+      description: item.description || 'N/A', 
+      amount: typeof item.amount === 'number' ? item.amount : 0,
+    })) : [];
+    if (!Array.isArray(doc.lineItems)) {
+      console.warn(`lineItems is not an array for invoice ID ${doc._id}`);
+    }
+
+    const invoice: Invoice = {
+      id: doc._id.toHexString(),
+      userId: doc.userId.toHexString(),
+      fileName: doc.fileName || 'Unknown File',
+      vendor: doc.vendor || 'Unknown Vendor',
+      date: doc.date || 'Unknown Date',
+      total: typeof doc.total === 'number' ? doc.total : 0,
+      lineItems: lineItems,
+      summary: doc.summary || 'No summary available.',
+      uploadedAt: uploadedAtISO,
+      gcsFileUri: doc.gcsFileUri,
+      isDeleted: !!doc.isDeleted,
+      deletedAt: deletedAtISO,
+    };
+
+    return { invoice };
+
+  } catch (error: any) {
+    console.error(`Error fetching invoice by ID (${invoiceId}):`, error.message, error.stack, error);
+    let errorMessage = 'An unexpected error occurred while fetching the invoice details.';
+    if (error.name === 'BSONError') {
+      errorMessage = 'Invalid ID format for fetching the invoice.';
+    } else if (error.message) {
+      errorMessage = `Failed to fetch invoice details: ${error.message}`;
     }
     return { error: errorMessage };
   }
