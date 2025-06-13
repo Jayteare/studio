@@ -4,18 +4,18 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useAuth } from '@/hooks/use-auth';
-import { fetchInvoiceById, type FetchInvoiceByIdResponse } from '@/app/dashboard/actions';
+import { fetchInvoiceById, type FetchInvoiceByIdResponse, findSimilarInvoices, type FindSimilarInvoicesResponse } from '@/app/dashboard/actions';
 import type { Invoice, LineItem } from '@/types/invoice';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableCaption } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, ArrowLeft, FileText, CalendarDays, CircleDollarSign, Info, AlertTriangle, ExternalLink } from 'lucide-react';
+import { Loader2, ArrowLeft, FileText, CalendarDays, CircleDollarSign, Info, AlertTriangle, ExternalLink, Copy, FileSearch } from 'lucide-react';
 import { format } from 'date-fns';
 import Link from 'next/link';
 import { AppLogo } from '@/components/app-logo';
 import { useToast } from '@/hooks/use-toast';
-import { cn } from '@/lib/utils'; // Added import for cn
+import { cn } from '@/lib/utils';
 
 export default function InvoiceDetailPage() {
   const router = useRouter();
@@ -26,6 +26,10 @@ export default function InvoiceDetailPage() {
   const [invoice, setInvoice] = useState<Invoice | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const [similarInvoices, setSimilarInvoices] = useState<Invoice[]>([]);
+  const [isLoadingSimilar, setIsLoadingSimilar] = useState(false);
+  const [errorSimilar, setErrorSimilar] = useState<string | null>(null);
 
   const invoiceId = Array.isArray(params.invoiceId) ? params.invoiceId[0] : params.invoiceId;
 
@@ -67,20 +71,53 @@ export default function InvoiceDetailPage() {
     loadInvoiceDetails();
   }, [loadInvoiceDetails]);
 
+
+  const loadSimilarInvoices = useCallback(async () => {
+    if (!invoice || !user?.id) return;
+
+    // Only try to load similar invoices if the current invoice has an embedding
+    if (!invoice.summaryEmbedding || invoice.summaryEmbedding.length === 0) {
+        // setErrorSimilar("This invoice does not have data for similarity comparison.");
+        setSimilarInvoices([]); // Ensure it's empty
+        return;
+    }
+
+    setIsLoadingSimilar(true);
+    setErrorSimilar(null);
+    const response: FindSimilarInvoicesResponse = await findSimilarInvoices(invoice.id, user.id);
+
+    if (response.error) {
+      setErrorSimilar(response.error);
+      // Optionally, toast for this error too, or rely on the inline message
+      // toast({ title: 'Could Not Find Similar Invoices', description: response.error, variant: 'destructive' });
+      setSimilarInvoices([]);
+    } else if (response.similarInvoices) {
+      setSimilarInvoices(response.similarInvoices);
+    }
+    setIsLoadingSimilar(false);
+  }, [invoice, user?.id, toast]);
+
+  useEffect(() => {
+    if (invoice && user?.id) {
+      loadSimilarInvoices();
+    }
+  }, [invoice, user?.id, loadSimilarInvoices]);
+
+
   const formatDate = (dateString?: string) => {
     if (!dateString) return 'N/A';
     try {
       const date = new Date(dateString);
-      if (isNaN(date.getTime())) { // Handle cases where date might be 'Unknown Date' or invalid
+      if (isNaN(date.getTime())) {
         const parts = dateString.match(/(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})/);
         if (parts) {
             let year = parseInt(parts[3]);
-            if (year < 100) year += 2000; // Basic two-digit year handling
-            return format(new Date(year, parseInt(parts[1]) - 1, parseInt(parts[2])), 'PPP'); // e.g. Jun 1, 2023
+            if (year < 100) year += 2000;
+            return format(new Date(year, parseInt(parts[1]) - 1, parseInt(parts[2])), 'PPP');
         }
-        return dateString; // Return original if unparseable
+        return dateString;
       }
-      return format(date, 'PPP p'); // e.g. Jun 1, 2023, 12:00:00 AM
+      return format(date, 'PPP p');
     } catch (error) {
       console.warn(`Could not parse date: ${dateString}`);
       return dateString;
@@ -223,6 +260,60 @@ export default function InvoiceDetailPage() {
              <Badge variant="outline">Invoice ID: {invoice.id}</Badge>
            </CardFooter>
         </Card>
+
+        { (invoice.summaryEmbedding && invoice.summaryEmbedding.length > 0) && (
+          <Card className="shadow-lg mt-8">
+            <CardHeader>
+              <CardTitle className="font-headline text-2xl flex items-center gap-2">
+                <Copy className="h-5 w-5 text-primary" />
+                Similar Invoices
+              </CardTitle>
+              <CardDescription>Other invoices with similar content based on AI analysis.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {isLoadingSimilar && (
+                <div className="flex items-center justify-center py-6">
+                  <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                  <p className="ml-3 text-muted-foreground">Finding similar invoices...</p>
+                </div>
+              )}
+              {errorSimilar && !isLoadingSimilar && (
+                <div className="text-destructive text-center py-6">
+                  <AlertTriangle className="h-8 w-8 mx-auto mb-2" />
+                  <p>Could not load similar invoices: {errorSimilar}</p>
+                </div>
+              )}
+              {!isLoadingSimilar && !errorSimilar && similarInvoices.length === 0 && (
+                <p className="text-muted-foreground text-center py-6">No significantly similar invoices found.</p>
+              )}
+              {!isLoadingSimilar && !errorSimilar && similarInvoices.length > 0 && (
+                <div className="space-y-4">
+                  {similarInvoices.map((simInv) => (
+                    <Card key={simInv.id} className="bg-muted/30 hover:shadow-md transition-shadow">
+                      <CardContent className="p-4">
+                        <div className="flex justify-between items-start">
+                            <div>
+                                <Link href={`/dashboard/invoice/${simInv.id}`} className="text-primary hover:underline">
+                                    <h4 className="font-semibold">{simInv.vendor}</h4>
+                                </Link>
+                                <p className="text-xs text-muted-foreground truncate max-w-xs" title={simInv.fileName}>File: {simInv.fileName}</p>
+                            </div>
+                            <div className="text-right">
+                                <p className="font-semibold text-primary">{formatCurrency(simInv.total)}</p>
+                                <p className="text-xs text-muted-foreground">{formatDate(simInv.date).split(',')[0]}</p>
+                            </div>
+                        </div>
+                        <p className="text-sm text-muted-foreground mt-2 line-clamp-2" title={simInv.summary}>
+                          {simInv.summary}
+                        </p>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
       </main>
        <footer className="py-6 md:px-8 md:py-0 border-t border-border/40 mt-auto">
           <div className="container flex flex-col items-center justify-between gap-4 md:h-20 md:flex-row">
@@ -235,7 +326,6 @@ export default function InvoiceDetailPage() {
   );
 }
 
-// Helper component, not exported from this file
 const Label: React.FC<React.HTMLAttributes<HTMLLabelElement>> = ({ className, children, ...props }) => (
   <label className={cn("block text-sm font-medium text-muted-foreground", className)} {...props}>
     {children}
