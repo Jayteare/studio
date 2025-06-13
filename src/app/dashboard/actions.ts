@@ -480,11 +480,11 @@ export async function searchInvoices(userId: string, searchText: string): Promis
       } else if (error.message && typeof error.message === 'string') {
           errorMessage = error.message;
           
-          if (errorMessage.includes('index not found') || errorMessage.includes(ATLAS_VECTOR_SEARCH_INDEX_NAME)) {
+          if (errorMessage.toLowerCase().includes('index not found') || errorMessage.toLowerCase().includes(ATLAS_VECTOR_SEARCH_INDEX_NAME.toLowerCase())) {
               errorMessage = `The required vector search index "${ATLAS_VECTOR_SEARCH_INDEX_NAME}" may not exist or is not configured correctly. Please also ensure that documents have the 'summaryEmbedding' field and it's an array of numbers.`;
-          } else if (errorMessage.includes('queryVector parameter must be an array of numbers')) {
+          } else if (errorMessage.toLowerCase().includes('queryvector parameter must be an array of numbers')) {
               errorMessage = 'The generated query for search was invalid. Please try rephrasing your search.';
-          } else if (errorMessage.includes('summaryEmbedding field must be an array type')) {
+          } else if (errorMessage.toLowerCase().includes('summaryembedding field must be an array type')) {
               errorMessage = `One or more invoices has an invalid 'summaryEmbedding'. It should be an array of numbers. Check your data or re-upload affected invoices. Index name: ${ATLAS_VECTOR_SEARCH_INDEX_NAME}`;
           }
       } else if (error.toString && typeof error.toString === 'function') {
@@ -514,5 +514,101 @@ export async function searchInvoices(userId: string, searchText: string): Promis
     return { error: errorMessage };
   }
 }
-    
 
+export interface FindSimilarInvoicesResponse {
+  similarInvoices?: Invoice[];
+  error?: string;
+}
+
+export async function findSimilarInvoices(currentInvoiceId: string, userId: string): Promise<FindSimilarInvoicesResponse> {
+  if (!userId) {
+    return { error: 'User ID is required to find similar invoices.' };
+  }
+  if (!currentInvoiceId) {
+    return { error: 'Current Invoice ID is required to find similar invoices.' };
+  }
+
+  let currentInvoiceObjectId: ObjectId;
+  let userObjectId: ObjectId;
+
+  try {
+    currentInvoiceObjectId = new ObjectId(currentInvoiceId);
+    userObjectId = new ObjectId(userId);
+  } catch (e) {
+    return { error: 'Invalid Invoice ID or User ID format.' };
+  }
+
+  try {
+    const { db } = await connectToDatabase();
+
+    // 1. Fetch the current invoice to get its embedding
+    const currentInvoiceDoc = await db.collection(INVOICES_COLLECTION).findOne({
+      _id: currentInvoiceObjectId,
+      userId: userObjectId,
+      isDeleted: { $ne: true },
+      summaryEmbedding: { $exists: true, $type: 'array' } 
+    });
+
+    if (!currentInvoiceDoc) {
+      return { error: 'Current invoice not found, does not have an embedding, or you do not have permission.' };
+    }
+    
+    const currentInvoice = mapDocumentToInvoice(currentInvoiceDoc);
+    if (!currentInvoice.summaryEmbedding || currentInvoice.summaryEmbedding.length === 0) {
+        return { error: 'Current invoice does not have a summary embedding to compare against.' };
+    }
+    const queryVector = currentInvoice.summaryEmbedding;
+
+    // 2. Perform vector search for similar invoices
+    const pipeline = [
+      {
+        $vectorSearch: {
+          index: ATLAS_VECTOR_SEARCH_INDEX_NAME,
+          path: 'summaryEmbedding',
+          queryVector: queryVector,
+          numCandidates: 50, // Number of candidates to consider
+          limit: 6, // Return top 5 similar + current one (which we'll filter out)
+          filter: {
+            userId: userObjectId,
+            isDeleted: { $ne: true },
+            summaryEmbedding: { $exists: true, $type: 'array' },
+          },
+        },
+      },
+      { // Exclude the current invoice itself from the results
+        $match: {
+            _id: { $ne: currentInvoiceObjectId }
+        }
+      },
+      { // Optionally, limit again to ensure only 5 results if current invoice was in top N.
+          $limit: 5 
+      }
+    ];
+
+    const similarDocuments = await db.collection(INVOICES_COLLECTION).aggregate(pipeline).toArray();
+    const similarInvoices: Invoice[] = similarDocuments.map(mapDocumentToInvoice);
+    
+    return { similarInvoices };
+
+  } catch (error: any) {
+    console.error('Raw error object during findSimilarInvoices:', error);
+    let errorMessage = 'An unexpected error occurred while finding similar invoices.';
+    if (error) {
+      if (typeof error === 'string') {
+        errorMessage = error;
+      } else if (error.message && typeof error.message === 'string') {
+        errorMessage = error.message;
+         if (errorMessage.toLowerCase().includes('index not found') || errorMessage.toLowerCase().includes(ATLAS_VECTOR_SEARCH_INDEX_NAME.toLowerCase())) {
+              errorMessage = `The vector search index "${ATLAS_VECTOR_SEARCH_INDEX_NAME}" may be misconfigured or not found for similar invoice search.`;
+          }
+      } else if (error.toString && typeof error.toString === 'function') {
+        errorMessage = error.toString();
+      }
+    }
+     if (!errorMessage.toLowerCase().startsWith('failed to find similar invoices:')) {
+        errorMessage = `Failed to find similar invoices: ${errorMessage}`;
+    }
+    return { error: errorMessage };
+  }
+}
+    
