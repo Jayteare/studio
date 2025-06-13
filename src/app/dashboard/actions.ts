@@ -457,7 +457,7 @@ export async function searchInvoices(userId: string, searchText: string): Promis
           filter: {
             userId: userObjectId,
             isDeleted: { $ne: true },
-            summaryEmbedding: { $exists: true, $type: "array" } // Ensure embedding exists and is an array
+            summaryEmbedding: { $exists: true, $type: "array" }
           },
         },
       },
@@ -470,29 +470,48 @@ export async function searchInvoices(userId: string, searchText: string): Promis
     return { invoices };
 
   } catch (error: any) {
-    console.error('Error searching invoices:', error); // Log the raw error object
-    let errorMessage = 'An unexpected error occurred during search.';
+    console.error('Raw error object during searchInvoices:', error); 
 
-    if (error instanceof Error) {
-        errorMessage = `Search failed: ${error.message}`;
-        const errorString = error.toString();
-        if (errorString.includes('index not found') || errorString.includes(ATLAS_VECTOR_SEARCH_INDEX_NAME)) {
-            errorMessage = `Search failed: The required vector search index "${ATLAS_VECTOR_SEARCH_INDEX_NAME}" may not exist or is not configured correctly in MongoDB Atlas. Also ensure that documents have 'summaryEmbedding' field and it's an array.`;
-        } else if (errorString.includes('queryVector parameter must be an array of numbers')) {
-            errorMessage = 'Search failed: The generated query for search was invalid. Please try rephrasing your search.';
-        } else if (errorString.includes('summaryEmbedding field must be an array type')) {
-             errorMessage = `Search failed: One or more invoices has an invalid 'summaryEmbedding'. It should be an array of numbers. Please check your data or re-upload affected invoices. Index name: ${ATLAS_VECTOR_SEARCH_INDEX_NAME}`;
+    let errorMessage = 'An unexpected error occurred during search.'; 
+
+    if (error) { 
+      if (typeof error === 'string') {
+          errorMessage = error;
+      } else if (typeof error.message === 'string') {
+          errorMessage = error.message;
+          
+          if (errorMessage.includes('index not found') || errorMessage.includes(ATLAS_VECTOR_SEARCH_INDEX_NAME)) {
+              errorMessage = `The required vector search index "${ATLAS_VECTOR_SEARCH_INDEX_NAME}" may not exist or is not configured correctly. Please also ensure that documents have the 'summaryEmbedding' field and it's an array of numbers.`;
+          } else if (errorMessage.includes('queryVector parameter must be an array of numbers')) {
+              errorMessage = 'The generated query for search was invalid. Please try rephrasing your search.';
+          } else if (errorMessage.includes('summaryEmbedding field must be an array type')) {
+              errorMessage = `One or more invoices has an invalid 'summaryEmbedding'. It should be an array of numbers. Check your data or re-upload affected invoices. Index name: ${ATLAS_VECTOR_SEARCH_INDEX_NAME}`;
+          }
+      } else if (typeof error.toString === 'function') {
+          errorMessage = error.toString();
+      }
+    }
+    
+    const knownErrorMessages = [
+        `the required vector search index "${atlas_vector_search_index_name.tolowercase()}"`,
+        `the generated query for search was invalid`,
+        `one or more invoices has an invalid 'summaryembedding'`
+    ];
+
+    let isKnownError = false;
+    const lowerErrorMessage = errorMessage.toLowerCase();
+    for (const knownMsg of knownErrorMessages) {
+        if (lowerErrorMessage.includes(knownMsg)) {
+            isKnownError = true;
+            break;
         }
+    }
 
-    } else if (typeof error === 'string') {
-        errorMessage = `Search failed: ${error}`;
-    } else if (error && typeof error.toString === 'function') {
-        errorMessage = `Search failed: ${error.toString()}`;
+    if (!isKnownError && !lowerErrorMessage.startsWith('search failed:')) {
+        errorMessage = `Search failed: ${errorMessage}`;
     }
     
     return { error: errorMessage };
   }
 }
-
-
     
