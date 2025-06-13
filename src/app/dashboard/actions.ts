@@ -477,7 +477,7 @@ export async function searchInvoices(userId: string, searchText: string): Promis
     if (error) { 
       if (typeof error === 'string') {
           errorMessage = error;
-      } else if (typeof error.message === 'string') {
+      } else if (error.message && typeof error.message === 'string') {
           errorMessage = error.message;
           
           if (errorMessage.includes('index not found') || errorMessage.includes(ATLAS_VECTOR_SEARCH_INDEX_NAME)) {
@@ -487,13 +487,13 @@ export async function searchInvoices(userId: string, searchText: string): Promis
           } else if (errorMessage.includes('summaryEmbedding field must be an array type')) {
               errorMessage = `One or more invoices has an invalid 'summaryEmbedding'. It should be an array of numbers. Check your data or re-upload affected invoices. Index name: ${ATLAS_VECTOR_SEARCH_INDEX_NAME}`;
           }
-      } else if (typeof error.toString === 'function') {
+      } else if (error.toString && typeof error.toString === 'function') {
           errorMessage = error.toString();
       }
     }
     
     const knownErrorMessages = [
-        `the required vector search index "${atlas_vector_search_index_name.tolowercase()}"`,
+        `the required vector search index "${ATLAS_VECTOR_SEARCH_INDEX_NAME.toLowerCase()}"`,
         `the generated query for search was invalid`,
         `one or more invoices has an invalid 'summaryembedding'`
     ];
@@ -515,3 +515,4 @@ export async function searchInvoices(userId: string, searchText: string): Promis
   }
 }
     
+
