@@ -33,15 +33,53 @@ const ATLAS_VECTOR_SEARCH_INDEX_NAME = 'vector_index_summary'; // As configured 
 
 // Utility function to map MongoDB document to Invoice type
 function mapDocumentToInvoice(doc: any): Invoice {
+  // Ensure doc is an object
+  if (!doc || typeof doc !== 'object' || doc === null) {
+    console.warn('mapDocumentToInvoice received a non-object or null document:', doc);
+    const errorId = new ObjectId().toHexString();
+    return {
+      id: errorId,
+      userId: 'ERROR_INVALID_DOC_USER',
+      fileName: 'Invalid Document',
+      vendor: 'N/A',
+      date: new Date(0).toISOString(),
+      total: 0,
+      lineItems: [],
+      summary: `Error: Could not process document data for ID ${errorId}.`,
+      uploadedAt: new Date(0).toISOString(),
+      isDeleted: true,
+    };
+  }
+
+  let id: string;
+  if (doc._id && typeof doc._id.toHexString === 'function') {
+    id = doc._id.toHexString();
+  } else if (doc._id && typeof doc._id === 'string') {
+    id = doc._id;
+  } else {
+    console.warn(`Invalid or missing _id for document:`, JSON.stringify(doc));
+    id = new ObjectId().toHexString(); // Fallback to a new ObjectId string
+  }
+
+  let userId: string;
+  if (doc.userId && typeof doc.userId.toHexString === 'function') {
+    userId = doc.userId.toHexString();
+  } else if (doc.userId && typeof doc.userId === 'string') {
+    userId = doc.userId;
+  } else {
+    console.warn(`Invalid or missing userId for document ID ${id}:`, doc.userId);
+    userId = 'UNKNOWN_USER';
+  }
+
   let uploadedAtISO: string;
   if (doc.uploadedAt instanceof Date) {
     uploadedAtISO = doc.uploadedAt.toISOString();
   } else if (typeof doc.uploadedAt === 'string') {
     const parsedDate = new Date(doc.uploadedAt);
     uploadedAtISO = !isNaN(parsedDate.getTime()) ? parsedDate.toISOString() : new Date(0).toISOString();
-    if (isNaN(parsedDate.getTime())) console.warn(`Invalid uploadedAt date format for invoice ID ${doc._id}: ${doc.uploadedAt}`);
+    if (isNaN(parsedDate.getTime())) console.warn(`Invalid uploadedAt date format for invoice ID ${id}: ${doc.uploadedAt}`);
   } else {
-    console.warn(`Missing or invalid uploadedAt for invoice ID ${doc._id}`);
+    console.warn(`Missing or invalid uploadedAt for invoice ID ${id}, type: ${typeof doc.uploadedAt}`);
     uploadedAtISO = new Date(0).toISOString();
   }
 
@@ -51,31 +89,31 @@ function mapDocumentToInvoice(doc: any): Invoice {
   } else if (typeof doc.deletedAt === 'string') {
     const parsedDate = new Date(doc.deletedAt);
     deletedAtISO = !isNaN(parsedDate.getTime()) ? parsedDate.toISOString() : undefined;
-    if (isNaN(parsedDate.getTime())) console.warn(`Invalid deletedAt date format for invoice ID ${doc._id}: ${doc.deletedAt}`);
-  } else if (doc.deletedAt) {
-    console.warn(`Invalid deletedAt type for invoice ID ${doc._id}: ${typeof doc.deletedAt}`);
+    if (isNaN(parsedDate.getTime())) console.warn(`Invalid deletedAt date format for invoice ID ${id}: ${doc.deletedAt}`);
+  } else if (doc.deletedAt !== null && doc.deletedAt !== undefined) {
+    console.warn(`Invalid deletedAt type for invoice ID ${id}: ${typeof doc.deletedAt}`);
   }
 
   const lineItems: LineItem[] = Array.isArray(doc.lineItems) ? doc.lineItems.map((item: any) => ({
-    description: item.description || 'N/A',
-    amount: typeof item.amount === 'number' ? item.amount : 0,
+    description: (item && typeof item.description === 'string') ? item.description : 'N/A',
+    amount: (item && typeof item.amount === 'number') ? item.amount : 0,
   })) : [];
-  if (!Array.isArray(doc.lineItems)) {
-    console.warn(`lineItems is not an array for invoice ID ${doc._id}`);
+  if (!Array.isArray(doc.lineItems) && doc.lineItems !== undefined && doc.lineItems !== null) {
+    console.warn(`lineItems is not an array for invoice ID ${id}:`, doc.lineItems);
   }
 
   return {
-    id: doc._id.toHexString(),
-    userId: doc.userId.toHexString(),
-    fileName: doc.fileName || 'Unknown File',
-    vendor: doc.vendor || 'Unknown Vendor',
-    date: doc.date || 'Unknown Date',
+    id,
+    userId,
+    fileName: typeof doc.fileName === 'string' ? doc.fileName : 'Unknown File',
+    vendor: typeof doc.vendor === 'string' ? doc.vendor : 'Unknown Vendor',
+    date: typeof doc.date === 'string' ? doc.date : 'Unknown Date',
     total: typeof doc.total === 'number' ? doc.total : 0,
     lineItems: lineItems,
-    summary: doc.summary || 'No summary available.',
-    summaryEmbedding: doc.summaryEmbedding as number[] | undefined,
+    summary: typeof doc.summary === 'string' ? doc.summary : 'No summary available.',
+    summaryEmbedding: Array.isArray(doc.summaryEmbedding) ? doc.summaryEmbedding as number[] : undefined,
     uploadedAt: uploadedAtISO,
-    gcsFileUri: doc.gcsFileUri,
+    gcsFileUri: typeof doc.gcsFileUri === 'string' ? doc.gcsFileUri : undefined,
     isDeleted: !!doc.isDeleted,
     deletedAt: deletedAtISO,
   };
@@ -136,10 +174,10 @@ export async function handleInvoiceUpload(
         const embeddingResponse = await ai.embed({
           content: summarizedData.summary,
         });
-        if (embeddingResponse && embeddingResponse.embedding) {
+        if (embeddingResponse && embeddingResponse.embedding && Array.isArray(embeddingResponse.embedding)) {
           summaryEmbedding = embeddingResponse.embedding;
         } else {
-          console.warn('Failed to generate summary embedding: Embedding response was invalid.');
+          console.warn('Failed to generate summary embedding: Embedding response was invalid or missing embedding array.', embeddingResponse);
         }
       } catch (embeddingError: any) {
         console.warn('Failed to generate summary embedding:', embeddingError.message);
@@ -199,11 +237,14 @@ export async function handleInvoiceUpload(
   } catch (error: any) {
     console.error('Error processing invoice:', error);
     let errorMessage = 'An unexpected error occurred while processing the invoice.';
-    if (error && typeof error.message === 'string') {
+    if (error instanceof Error) {
       errorMessage = error.message;
+    } else if (typeof error === 'string') {
+      errorMessage = error;
     }
 
-    if (error.name === 'BSONError' && error.message.includes('input must be a 24 character hex string')) {
+
+    if (error?.name === 'BSONError' && error?.message?.includes('input must be a 24 character hex string')) {
       errorMessage = 'Invalid User ID format for database operation.';
     } else if (errorMessage.includes('Deadline exceeded') || errorMessage.includes('unavailable')) {
       errorMessage = 'The AI service is currently unavailable or timed out. Please try again later.';
@@ -211,8 +252,8 @@ export async function handleInvoiceUpload(
       errorMessage = "The AI service could not process the file's format. Please ensure it's a clear PDF, JPG, or PNG.";
     } else if (errorMessage.includes('unparsable') || errorMessage.includes('malformed')) {
       errorMessage = 'The uploaded file appears to be corrupted or unreadable.';
-    } else if (errorMessage.includes('GCS Upload Error') || (error.message && error.message.startsWith('GCS Upload Error'))) {
-      errorMessage = `Failed to store invoice file in Cloud Storage: ${error.message.replace('GCS Upload Error: ', '')}`;
+    } else if (errorMessage.includes('GCS Upload Error') || (error?.message && error?.message.startsWith('GCS Upload Error'))) {
+      errorMessage = `Failed to store invoice file in Cloud Storage: ${error.message.replace('GCS UploadError: ', '')}`;
     }
 
     return { error: errorMessage };
@@ -253,12 +294,17 @@ export async function fetchUserInvoices(userId: string): Promise<FetchInvoicesRe
     return { invoices };
 
   } catch (error: any) {
-    console.error('Error fetching invoices:', error.message, error.stack, error);
+    console.error('Error fetching invoices:', error);
     let errorMessage = 'An unexpected error occurred while fetching invoices.';
-    if (error.name === 'BSONError' && error.message.includes('input must be a 24 character hex string')) {
-      errorMessage = 'Invalid User ID format for fetching invoices.';
-    } else if (error.message) {
+     if (error instanceof Error) {
       errorMessage = `Failed to fetch invoices: ${error.message}`;
+      if (error.name === 'BSONError' && error.message.includes('input must be a 24 character hex string')) {
+        errorMessage = 'Invalid User ID format for fetching invoices.';
+      }
+    } else if (typeof error === 'string') {
+      errorMessage = `Failed to fetch invoices: ${error}`;
+    } else if (error && typeof error.toString === 'function') {
+        errorMessage = `Failed to fetch invoices: ${error.toString()}`;
     }
     return { error: errorMessage };
   }
@@ -297,12 +343,17 @@ export async function softDeleteInvoice(invoiceId: string, userId: string): Prom
 
     return { success: true, deletedInvoiceId: invoiceId };
   } catch (error: any) {
-    console.error('Error soft deleting invoice:', error.message, error.stack, error);
+    console.error('Error soft deleting invoice:', error);
     let errorMessage = 'An unexpected error occurred while deleting the invoice.';
-    if (error.name === 'BSONError') {
-      errorMessage = 'Invalid ID format for invoice or user during delete.';
-    } else if (error.message) {
+    if (error instanceof Error) {
       errorMessage = `Failed to delete invoice: ${error.message}`;
+      if (error.name === 'BSONError') {
+        errorMessage = 'Invalid ID format for invoice or user during delete.';
+      }
+    } else if (typeof error === 'string') {
+      errorMessage = `Failed to delete invoice: ${error}`;
+    } else if (error && typeof error.toString === 'function') {
+        errorMessage = `Failed to delete invoice: ${error.toString()}`;
     }
     return { error: errorMessage };
   }
@@ -349,12 +400,17 @@ export async function fetchInvoiceById(invoiceId: string, userId: string): Promi
     return { invoice };
 
   } catch (error: any) {
-    console.error(`Error fetching invoice by ID (${invoiceId}):`, error.message, error.stack, error);
+    console.error(`Error fetching invoice by ID (${invoiceId}):`, error);
     let errorMessage = 'An unexpected error occurred while fetching the invoice details.';
-    if (error.name === 'BSONError') {
-      errorMessage = 'Invalid ID format for fetching the invoice.';
-    } else if (error.message) {
+    if (error instanceof Error) {
       errorMessage = `Failed to fetch invoice details: ${error.message}`;
+      if (error.name === 'BSONError') {
+        errorMessage = 'Invalid ID format for fetching the invoice.';
+      }
+    } else if (typeof error === 'string') {
+      errorMessage = `Failed to fetch invoice details: ${error}`;
+    } else if (error && typeof error.toString === 'function') {
+        errorMessage = `Failed to fetch invoice details: ${error.toString()}`;
     }
     return { error: errorMessage };
   }
@@ -401,7 +457,7 @@ export async function searchInvoices(userId: string, searchText: string): Promis
           filter: {
             userId: userObjectId,
             isDeleted: { $ne: true },
-            summaryEmbedding: { $exists: true } // Ensure we only search documents with embeddings
+            summaryEmbedding: { $exists: true, $type: "array" } // Ensure embedding exists and is an array
           },
         },
       },
@@ -414,22 +470,29 @@ export async function searchInvoices(userId: string, searchText: string): Promis
     return { invoices };
 
   } catch (error: any) {
-    console.error('Error searching invoices:', error);
+    console.error('Error searching invoices:', error); // Log the raw error object
     let errorMessage = 'An unexpected error occurred during search.';
 
-    if (error && typeof error.message === 'string') {
+    if (error instanceof Error) {
         errorMessage = `Search failed: ${error.message}`;
-    } else if (error) {
-        errorMessage = `Search failed: ${String(error)}`;
+        const errorString = error.toString();
+        if (errorString.includes('index not found') || errorString.includes(ATLAS_VECTOR_SEARCH_INDEX_NAME)) {
+            errorMessage = `Search failed: The required vector search index "${ATLAS_VECTOR_SEARCH_INDEX_NAME}" may not exist or is not configured correctly in MongoDB Atlas. Also ensure that documents have 'summaryEmbedding' field and it's an array.`;
+        } else if (errorString.includes('queryVector parameter must be an array of numbers')) {
+            errorMessage = 'Search failed: The generated query for search was invalid. Please try rephrasing your search.';
+        } else if (errorString.includes('summaryEmbedding field must be an array type')) {
+             errorMessage = `Search failed: One or more invoices has an invalid 'summaryEmbedding'. It should be an array of numbers. Please check your data or re-upload affected invoices. Index name: ${ATLAS_VECTOR_SEARCH_INDEX_NAME}`;
+        }
+
+    } else if (typeof error === 'string') {
+        errorMessage = `Search failed: ${error}`;
+    } else if (error && typeof error.toString === 'function') {
+        errorMessage = `Search failed: ${error.toString()}`;
     }
     
-    const errorString = error && typeof error.toString === 'function' ? error.toString() : '';
-    if (errorString.includes('index not found') || errorString.includes(ATLAS_VECTOR_SEARCH_INDEX_NAME)) {
-        errorMessage = `Search failed: The required vector search index "${ATLAS_VECTOR_SEARCH_INDEX_NAME}" may not exist or is not configured correctly in MongoDB Atlas. Also ensure that the documents being searched have the 'summaryEmbedding' field.`;
-    }
-     if (errorString.includes('queryVector parameter must be an array of numbers')) {
-        errorMessage = 'Search failed: The generated query for search was invalid. Please try rephrasing your search.';
-    }
     return { error: errorMessage };
   }
 }
+
+
+    
