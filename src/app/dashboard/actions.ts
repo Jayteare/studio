@@ -3,9 +3,10 @@
 
 import { ObjectId } from 'mongodb';
 import { connectToDatabase } from '@/lib/mongodb';
-import { uploadFileToGCS } from '@/lib/gcs'; 
+import { uploadFileToGCS } from '@/lib/gcs';
 import { extractInvoiceData, type ExtractInvoiceDataOutput } from '@/ai/flows/extract-invoice-data';
 import { summarizeInvoice, type SummarizeInvoiceOutput } from '@/ai/flows/summarize-invoice';
+import { ai } from '@/ai/genkit'; // Import the Genkit ai instance
 import type { Invoice, LineItem } from '@/types/invoice';
 
 // Helper to convert File object to data URI and Buffer
@@ -24,7 +25,7 @@ async function prepareFileData(file: File): Promise<FileConversionResult> {
 export interface UploadInvoiceFormState {
   invoice?: Invoice;
   error?: string;
-  message?: string; 
+  message?: string;
 }
 
 const INVOICES_COLLECTION = 'uploaded_invoices';
@@ -51,9 +52,9 @@ export async function handleInvoiceUpload(
 
   const maxSizeInBytes = 10 * 1024 * 1024; // 10MB
   if (file.size > maxSizeInBytes) {
-    return { error: `File is too large (${(file.size / (1024*1024)).toFixed(2)}MB). Maximum size is 10MB.` };
+    return { error: `File is too large (${(file.size / (1024 * 1024)).toFixed(2)}MB). Maximum size is 10MB.` };
   }
-  
+
   let fileData: FileConversionResult;
   let gcsFileUri: string | undefined = undefined;
 
@@ -62,10 +63,10 @@ export async function handleInvoiceUpload(
     const extractedData: ExtractInvoiceDataOutput = await extractInvoiceData({ invoiceDataUri: fileData.dataUri });
 
     if (!extractedData || !extractedData.vendor || typeof extractedData.total === 'undefined') {
-        console.error('Extraction failed or returned incomplete data:', extractedData);
-        return { error: 'Failed to extract key data from invoice. The document might not be a valid invoice or is unreadable by the AI.' };
+      console.error('Extraction failed or returned incomplete data:', extractedData);
+      return { error: 'Failed to extract key data from invoice. The document might not be a valid invoice or is unreadable by the AI.' };
     }
-    
+
     const summaryInput = {
       vendor: extractedData.vendor,
       date: extractedData.date,
@@ -77,6 +78,23 @@ export async function handleInvoiceUpload(
     };
     const summarizedData: SummarizeInvoiceOutput = await summarizeInvoice(summaryInput);
 
+    // Generate embedding for the summary
+    let summaryEmbedding: number[] | undefined = undefined;
+    if (summarizedData.summary) {
+      try {
+        const embeddingResponse = await ai.embed({
+          content: summarizedData.summary,
+          // You can specify a model, e.g., model: 'text-embedding-004'
+          // If not specified, it uses the default embedding model configured in Genkit.
+        });
+        summaryEmbedding = embeddingResponse.embedding;
+      } catch (embeddingError: any) {
+        console.warn('Failed to generate summary embedding:', embeddingError.message);
+        // Continue without embedding if it fails, or return an error if critical
+      }
+    }
+
+
     const uniqueFileIdForGCS = new ObjectId().toHexString();
     const gcsDestinationPath = `invoices/${userIdString}/${uniqueFileIdForGCS}_${file.name}`;
     gcsFileUri = await uploadFileToGCS(fileData.buffer, gcsDestinationPath, file.type);
@@ -86,16 +104,17 @@ export async function handleInvoiceUpload(
       userId: new ObjectId(userIdString),
       fileName: file.name,
       vendor: extractedData.vendor,
-      date: extractedData.date, 
+      date: extractedData.date,
       total: extractedData.total,
       lineItems: extractedData.lineItems.map(item => ({
         description: item.description,
         amount: item.amount,
-      })), 
+      })),
       summary: summarizedData.summary,
-      uploadedAt: new Date(), 
+      summaryEmbedding: summaryEmbedding, // Store the embedding
+      uploadedAt: new Date(),
       gcsFileUri: gcsFileUri,
-      isDeleted: false, 
+      isDeleted: false,
       deletedAt: null,
     };
 
@@ -106,41 +125,42 @@ export async function handleInvoiceUpload(
     }
 
     const newInvoice: Invoice = {
-      id: insertResult.insertedId.toHexString(), 
-      userId: userIdString, 
+      id: insertResult.insertedId.toHexString(),
+      userId: userIdString,
       fileName: file.name,
       vendor: extractedData.vendor,
-      date: extractedData.date, 
+      date: extractedData.date,
       total: extractedData.total,
-      lineItems: extractedData.lineItems as LineItem[], 
+      lineItems: extractedData.lineItems as LineItem[],
       summary: summarizedData.summary,
+      summaryEmbedding: summaryEmbedding,
       uploadedAt: invoiceDocumentForDb.uploadedAt.toISOString(),
-      gcsFileUri: gcsFileUri, 
+      gcsFileUri: gcsFileUri,
       isDeleted: false,
     };
-    
-    return { 
-        invoice: newInvoice, 
-        message: `Successfully processed ${file.name}. Data saved and file stored in Cloud Storage.` 
+
+    return {
+      invoice: newInvoice,
+      message: `Successfully processed ${file.name}. Data saved and file stored in Cloud Storage.`
     };
 
   } catch (error: any) {
     console.error('Error processing invoice:', error);
     let errorMessage = 'An unexpected error occurred while processing the invoice.';
     if (error && typeof error.message === 'string') {
-        errorMessage = error.message;
+      errorMessage = error.message;
     }
-    
+
     if (error.name === 'BSONError' && error.message.includes('input must be a 24 character hex string')) {
       errorMessage = 'Invalid User ID format for database operation.';
     } else if (errorMessage.includes('Deadline exceeded') || errorMessage.includes('unavailable')) {
-        errorMessage = 'The AI service is currently unavailable or timed out. Please try again later.';
+      errorMessage = 'The AI service is currently unavailable or timed out. Please try again later.';
     } else if (errorMessage.includes('Invalid media type') || errorMessage.includes('Unsupported input content type')) {
-        errorMessage = "The AI service could not process the file's format. Please ensure it's a clear PDF, JPG, or PNG.";
+      errorMessage = "The AI service could not process the file's format. Please ensure it's a clear PDF, JPG, or PNG.";
     } else if (errorMessage.includes('unparsable') || errorMessage.includes('malformed')) {
-        errorMessage = 'The uploaded file appears to be corrupted or unreadable.';
+      errorMessage = 'The uploaded file appears to be corrupted or unreadable.';
     } else if (errorMessage.includes('GCS Upload Error') || (error.message && error.message.startsWith('GCS Upload Error'))) {
-        errorMessage = `Failed to store invoice file in Cloud Storage: ${error.message.replace('GCS Upload Error: ', '')}`;
+      errorMessage = `Failed to store invoice file in Cloud Storage: ${error.message.replace('GCS Upload Error: ', '')}`;
     }
 
     return { error: errorMessage };
@@ -157,7 +177,7 @@ export async function fetchUserInvoices(userId: string): Promise<FetchInvoicesRe
   if (!userId) {
     return { error: 'User ID is required to fetch invoices.' };
   }
-  
+
   try {
     const { db } = await connectToDatabase();
     let userObjectId;
@@ -170,11 +190,11 @@ export async function fetchUserInvoices(userId: string): Promise<FetchInvoicesRe
 
     const invoiceDocuments = await db
       .collection(INVOICES_COLLECTION)
-      .find({ 
+      .find({
         userId: userObjectId,
         isDeleted: { $ne: true }
       })
-      .sort({ uploadedAt: -1 }) 
+      .sort({ uploadedAt: -1 })
       .toArray();
 
 
@@ -188,7 +208,7 @@ export async function fetchUserInvoices(userId: string): Promise<FetchInvoicesRe
         if (isNaN(parsedDate.getTime())) console.warn(`Invalid uploadedAt date format for invoice ID ${doc._id}: ${doc.uploadedAt}`);
       } else {
         console.warn(`Missing or invalid uploadedAt for invoice ID ${doc._id}`);
-        uploadedAtISO = new Date(0).toISOString(); 
+        uploadedAtISO = new Date(0).toISOString();
       }
 
       let deletedAtISO: string | undefined = undefined;
@@ -199,11 +219,11 @@ export async function fetchUserInvoices(userId: string): Promise<FetchInvoicesRe
         deletedAtISO = !isNaN(parsedDate.getTime()) ? parsedDate.toISOString() : undefined;
         if (isNaN(parsedDate.getTime())) console.warn(`Invalid deletedAt date format for invoice ID ${doc._id}: ${doc.deletedAt}`);
       } else if (doc.deletedAt) {
-         console.warn(`Invalid deletedAt type for invoice ID ${doc._id}: ${typeof doc.deletedAt}`);
+        console.warn(`Invalid deletedAt type for invoice ID ${doc._id}: ${typeof doc.deletedAt}`);
       }
-      
-      const lineItems: LineItem[] = Array.isArray(doc.lineItems) ? doc.lineItems.map((item: any) => ({ 
-        description: item.description || 'N/A', 
+
+      const lineItems: LineItem[] = Array.isArray(doc.lineItems) ? doc.lineItems.map((item: any) => ({
+        description: item.description || 'N/A',
         amount: typeof item.amount === 'number' ? item.amount : 0,
       })) : [];
       if (!Array.isArray(doc.lineItems)) {
@@ -215,13 +235,14 @@ export async function fetchUserInvoices(userId: string): Promise<FetchInvoicesRe
         userId: doc.userId.toHexString(),
         fileName: doc.fileName || 'Unknown File',
         vendor: doc.vendor || 'Unknown Vendor',
-        date: doc.date || 'Unknown Date', 
+        date: doc.date || 'Unknown Date',
         total: typeof doc.total === 'number' ? doc.total : 0,
         lineItems: lineItems,
         summary: doc.summary || 'No summary available.',
-        uploadedAt: uploadedAtISO, 
+        summaryEmbedding: doc.summaryEmbedding as number[] | undefined,
+        uploadedAt: uploadedAtISO,
         gcsFileUri: doc.gcsFileUri,
-        isDeleted: !!doc.isDeleted, 
+        isDeleted: !!doc.isDeleted,
         deletedAt: deletedAtISO,
       };
     });
@@ -233,7 +254,7 @@ export async function fetchUserInvoices(userId: string): Promise<FetchInvoicesRe
     if (error.name === 'BSONError' && error.message.includes('input must be a 24 character hex string')) {
       errorMessage = 'Invalid User ID format for fetching invoices.';
     } else if (error.message) {
-        errorMessage = `Failed to fetch invoices: ${error.message}`;
+      errorMessage = `Failed to fetch invoices: ${error.message}`;
     }
     return { error: errorMessage };
   }
@@ -274,10 +295,10 @@ export async function softDeleteInvoice(invoiceId: string, userId: string): Prom
   } catch (error: any) {
     console.error('Error soft deleting invoice:', error.message, error.stack, error);
     let errorMessage = 'An unexpected error occurred while deleting the invoice.';
-     if (error.name === 'BSONError') { 
+    if (error.name === 'BSONError') {
       errorMessage = 'Invalid ID format for invoice or user during delete.';
     } else if (error.message) {
-        errorMessage = `Failed to delete invoice: ${error.message}`;
+      errorMessage = `Failed to delete invoice: ${error.message}`;
     }
     return { error: errorMessage };
   }
@@ -319,7 +340,7 @@ export async function fetchInvoiceById(invoiceId: string, userId: string): Promi
     if (!doc) {
       return { error: 'Invoice not found or you do not have permission to view it.' };
     }
-    
+
     let uploadedAtISO: string;
     if (doc.uploadedAt instanceof Date) {
       uploadedAtISO = doc.uploadedAt.toISOString();
@@ -329,7 +350,7 @@ export async function fetchInvoiceById(invoiceId: string, userId: string): Promi
       if (isNaN(parsedDate.getTime())) console.warn(`Invalid uploadedAt date format for invoice ID ${doc._id}: ${doc.uploadedAt}`);
     } else {
       console.warn(`Missing or invalid uploadedAt for invoice ID ${doc._id}`);
-      uploadedAtISO = new Date(0).toISOString(); 
+      uploadedAtISO = new Date(0).toISOString();
     }
 
     let deletedAtISO: string | undefined = undefined;
@@ -340,11 +361,11 @@ export async function fetchInvoiceById(invoiceId: string, userId: string): Promi
       deletedAtISO = !isNaN(parsedDate.getTime()) ? parsedDate.toISOString() : undefined;
       if (isNaN(parsedDate.getTime())) console.warn(`Invalid deletedAt date format for invoice ID ${doc._id}: ${doc.deletedAt}`);
     } else if (doc.deletedAt) {
-        console.warn(`Invalid deletedAt type for invoice ID ${doc._id}: ${typeof doc.deletedAt}`);
+      console.warn(`Invalid deletedAt type for invoice ID ${doc._id}: ${typeof doc.deletedAt}`);
     }
-      
-    const lineItems: LineItem[] = Array.isArray(doc.lineItems) ? doc.lineItems.map((item: any) => ({ 
-      description: item.description || 'N/A', 
+
+    const lineItems: LineItem[] = Array.isArray(doc.lineItems) ? doc.lineItems.map((item: any) => ({
+      description: item.description || 'N/A',
       amount: typeof item.amount === 'number' ? item.amount : 0,
     })) : [];
     if (!Array.isArray(doc.lineItems)) {
@@ -360,6 +381,7 @@ export async function fetchInvoiceById(invoiceId: string, userId: string): Promi
       total: typeof doc.total === 'number' ? doc.total : 0,
       lineItems: lineItems,
       summary: doc.summary || 'No summary available.',
+      summaryEmbedding: doc.summaryEmbedding as number[] | undefined,
       uploadedAt: uploadedAtISO,
       gcsFileUri: doc.gcsFileUri,
       isDeleted: !!doc.isDeleted,
