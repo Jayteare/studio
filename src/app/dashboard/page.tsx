@@ -141,7 +141,7 @@ export default function DashboardPage() {
           </div>
         </header>
 
-        <main className="flex-1 container mx-auto max-w-5xl p-4 md:p-8">
+        <main className="flex-1 container mx-auto max-w-7xl p-4 md:p-8">
           <section className="mb-12">
             <InvoiceUploadForm 
               onInvoiceUploaded={handleInvoiceUploaded} 
