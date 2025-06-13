@@ -136,7 +136,11 @@ export async function handleInvoiceUpload(
         const embeddingResponse = await ai.embed({
           content: summarizedData.summary,
         });
-        summaryEmbedding = embeddingResponse.embedding;
+        if (embeddingResponse && embeddingResponse.embedding) {
+          summaryEmbedding = embeddingResponse.embedding;
+        } else {
+          console.warn('Failed to generate summary embedding: Embedding response was invalid.');
+        }
       } catch (embeddingError: any) {
         console.warn('Failed to generate summary embedding:', embeddingError.message);
       }
@@ -366,7 +370,6 @@ export async function searchInvoices(userId: string, searchText: string): Promis
     return { error: 'User ID is required to search invoices.' };
   }
   if (!searchText || searchText.trim() === '') {
-    // If search text is empty, return all user invoices (similar to fetchUserInvoices)
     return fetchUserInvoices(userId);
   }
 
@@ -380,11 +383,12 @@ export async function searchInvoices(userId: string, searchText: string): Promis
     }
 
     const queryEmbeddingResponse = await ai.embed({ content: searchText });
-    const queryVector = queryEmbeddingResponse.embedding;
-
-    if (!queryVector) {
-      return { error: 'Failed to generate embedding for search query.' };
+    
+    if (!queryEmbeddingResponse || !queryEmbeddingResponse.embedding || !Array.isArray(queryEmbeddingResponse.embedding)) {
+      console.error('Failed to generate embedding for search query. AI response:', queryEmbeddingResponse);
+      return { error: 'Failed to generate embedding for search query. The AI service might be unavailable or the query is invalid.' };
     }
+    const queryVector = queryEmbeddingResponse.embedding;
     
     const pipeline = [
       {
@@ -392,17 +396,15 @@ export async function searchInvoices(userId: string, searchText: string): Promis
           index: ATLAS_VECTOR_SEARCH_INDEX_NAME,
           path: 'summaryEmbedding',
           queryVector: queryVector,
-          numCandidates: 100, // Number of candidates to consider
-          limit: 10, // Number of results to return
+          numCandidates: 100, 
+          limit: 10, 
           filter: {
             userId: userObjectId,
             isDeleted: { $ne: true },
+            summaryEmbedding: { $exists: true } // Ensure we only search documents with embeddings
           },
         },
       },
-      // Optionally, add a $project stage if you need to reshape the document
-      // or ensure all fields match the Invoice type perfectly if $vectorSearch alters structure.
-      // For now, we assume $vectorSearch returns documents compatible with mapDocumentToInvoice
     ];
 
     const searchedDocuments = await db.collection(INVOICES_COLLECTION).aggregate(pipeline).toArray();
@@ -414,11 +416,19 @@ export async function searchInvoices(userId: string, searchText: string): Promis
   } catch (error: any) {
     console.error('Error searching invoices:', error);
     let errorMessage = 'An unexpected error occurred during search.';
-    if (error.message) {
+
+    if (error && typeof error.message === 'string') {
         errorMessage = `Search failed: ${error.message}`;
+    } else if (error) {
+        errorMessage = `Search failed: ${String(error)}`;
     }
-    if (error.toString().includes('index not found') || error.toString().includes(ATLAS_VECTOR_SEARCH_INDEX_NAME)) {
-        errorMessage = `Search failed: The required vector search index "${ATLAS_VECTOR_SEARCH_INDEX_NAME}" may not exist or is not configured correctly in MongoDB Atlas.`;
+    
+    const errorString = error && typeof error.toString === 'function' ? error.toString() : '';
+    if (errorString.includes('index not found') || errorString.includes(ATLAS_VECTOR_SEARCH_INDEX_NAME)) {
+        errorMessage = `Search failed: The required vector search index "${ATLAS_VECTOR_SEARCH_INDEX_NAME}" may not exist or is not configured correctly in MongoDB Atlas. Also ensure that the documents being searched have the 'summaryEmbedding' field.`;
+    }
+     if (errorString.includes('queryVector parameter must be an array of numbers')) {
+        errorMessage = 'Search failed: The generated query for search was invalid. Please try rephrasing your search.';
     }
     return { error: errorMessage };
   }
