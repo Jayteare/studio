@@ -15,6 +15,8 @@ export interface Invoice {
   summary: string; // AI-generated summary
   summaryEmbedding?: number[]; // Vector embedding of the summary
   categories?: string[]; // AI-suggested categories
+  isLikelyRecurring?: boolean; // AI-determined likelihood of being a recurring expense
+  recurrenceReasoning?: string; // AI's reasoning if it's likely recurring
   uploadedAt: string; // ISO string date
   gcsFileUri?: string; // GCS URI for the stored invoice file (e.g., gs://bucket/path/to/file)
   isDeleted?: boolean;

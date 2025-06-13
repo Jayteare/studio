@@ -7,6 +7,7 @@ import { uploadFileToGCS } from '@/lib/gcs';
 import { extractInvoiceData, type ExtractInvoiceDataOutput } from '@/ai/flows/extract-invoice-data';
 import { summarizeInvoice, type SummarizeInvoiceOutput } from '@/ai/flows/summarize-invoice';
 import { categorizeInvoice, type CategorizeInvoiceInput, type CategorizeInvoiceOutput } from '@/ai/flows/categorize-invoice-flow';
+import { detectRecurrence, type DetectRecurrenceInput, type DetectRecurrenceOutput } from '@/ai/flows/detect-recurrence-flow';
 import { ai } from '@/ai/genkit';
 import type { Invoice, LineItem } from '@/types/invoice';
 
@@ -110,6 +111,9 @@ function mapDocumentToInvoice(doc: any): Invoice {
       console.warn(`categories is not an array for invoice ID ${id}:`, doc.categories);
   }
 
+  const isLikelyRecurring: boolean | undefined = typeof doc.isLikelyRecurring === 'boolean' ? doc.isLikelyRecurring : undefined;
+  const recurrenceReasoning: string | undefined = typeof doc.recurrenceReasoning === 'string' ? doc.recurrenceReasoning : undefined;
+
 
   return {
     id,
@@ -120,8 +124,10 @@ function mapDocumentToInvoice(doc: any): Invoice {
     total: typeof doc.total === 'number' ? doc.total : 0,
     lineItems: lineItems,
     summary: typeof doc.summary === 'string' ? doc.summary : 'No summary available.',
-    summaryEmbedding: Array.isArray(doc.summaryEmbedding) ? doc.summaryEmbedding as number[] : undefined,
+    summaryEmbedding: Array.isArray(doc.summaryEmbedding) && doc.summaryEmbedding.every(num => typeof num === 'number') ? doc.summaryEmbedding as number[] : undefined,
     categories: categories,
+    isLikelyRecurring: isLikelyRecurring,
+    recurrenceReasoning: recurrenceReasoning,
     uploadedAt: uploadedAtISO,
     gcsFileUri: typeof doc.gcsFileUri === 'string' ? doc.gcsFileUri : undefined,
     isDeleted: !!doc.isDeleted,
@@ -190,7 +196,17 @@ export async function handleInvoiceUpload(
         }
     } catch (catError: any) {
         console.warn('Failed to categorize invoice:', catError.message);
-        // Proceed without categories or with a default
+    }
+
+    let recurrenceInfo: DetectRecurrenceOutput = { isLikelyRecurring: false };
+    try {
+        const recurrenceInput: DetectRecurrenceInput = {
+            vendor: extractedData.vendor,
+            lineItems: extractedData.lineItems.map(item => ({ description: item.description, amount: item.amount })),
+        };
+        recurrenceInfo = await detectRecurrence(recurrenceInput);
+    } catch (recError: any) {
+        console.warn('Failed to detect recurrence for invoice:', recError.message);
     }
 
 
@@ -229,6 +245,8 @@ export async function handleInvoiceUpload(
       summary: summarizedData.summary,
       summaryEmbedding: summaryEmbedding,
       categories: categories,
+      isLikelyRecurring: recurrenceInfo.isLikelyRecurring,
+      recurrenceReasoning: recurrenceInfo.reasoning,
       uploadedAt: new Date(),
       gcsFileUri: gcsFileUri,
       isDeleted: false,
@@ -252,6 +270,8 @@ export async function handleInvoiceUpload(
       summary: summarizedData.summary,
       summaryEmbedding: summaryEmbedding,
       categories: categories,
+      isLikelyRecurring: recurrenceInfo.isLikelyRecurring,
+      recurrenceReasoning: recurrenceInfo.reasoning,
       uploadedAt: invoiceDocumentForDb.uploadedAt.toISOString(),
       gcsFileUri: gcsFileUri,
       isDeleted: false,
