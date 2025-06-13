@@ -15,7 +15,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { FileText, CalendarDays, CircleDollarSign, MessageSquareText, Info, Trash2, Settings, FileIcon } from 'lucide-react';
+import { FileText, CalendarDays, CircleDollarSign, MessageSquareText, Info, Trash2, Settings, FileIcon, Tag } from 'lucide-react';
 import { format } from 'date-fns';
 import Link from 'next/link';
 
@@ -77,24 +77,29 @@ export function InvoiceList({ invoices, onDeleteInvoice }: InvoiceListProps) {
             <TableCaption>A list of your recently processed invoices. Click on a file name for details.</TableCaption>
             <TableHeader>
               <TableRow>
-                <TableHead className="w-[250px]">
+                <TableHead className="w-[200px]">
                   <div className="flex items-center gap-2">
                     <FileIcon className="h-4 w-4" /> File Name
                   </div>
                 </TableHead>
-                <TableHead className="w-[200px]">
+                <TableHead className="w-[180px]">
                   <div className="flex items-center gap-2">
                     <FileText className="h-4 w-4" /> Vendor
                   </div>
                 </TableHead>
-                <TableHead className="w-[150px]">
+                <TableHead className="w-[120px]">
                   <div className="flex items-center gap-2">
                     <CalendarDays className="h-4 w-4" /> Date
                   </div>
                 </TableHead>
-                <TableHead className="text-right w-[120px]">
+                <TableHead className="text-right w-[100px]">
                   <div className="flex items-center justify-end gap-2">
                     <CircleDollarSign className="h-4 w-4" /> Total
+                  </div>
+                </TableHead>
+                <TableHead className="w-[180px]">
+                  <div className="flex items-center gap-2">
+                    <Tag className="h-4 w-4" /> Categories
                   </div>
                 </TableHead>
                 <TableHead>
@@ -102,8 +107,8 @@ export function InvoiceList({ invoices, onDeleteInvoice }: InvoiceListProps) {
                     <MessageSquareText className="h-4 w-4" /> Summary Insight
                   </div>
                 </TableHead>
-                 <TableHead className="w-[150px]">Uploaded</TableHead>
-                 <TableHead className="w-[100px] text-center">
+                 <TableHead className="w-[120px]">Uploaded</TableHead>
+                 <TableHead className="w-[80px] text-center">
                     <div className="flex items-center justify-center gap-2">
                         <Settings className="h-4 w-4" /> Actions
                     </div>
@@ -113,14 +118,25 @@ export function InvoiceList({ invoices, onDeleteInvoice }: InvoiceListProps) {
             <TableBody>
               {invoices.map((invoice) => (
                 <TableRow key={invoice.id}>
-                  <TableCell className="font-medium truncate max-w-xs">
+                  <TableCell className="font-medium truncate max-w-[200px]">
                     <Link href={`/dashboard/invoice/${invoice.id}`} className="hover:underline text-primary" title={invoice.fileName}>
                       {invoice.fileName}
                     </Link>
                   </TableCell>
-                  <TableCell>{invoice.vendor}</TableCell>
+                  <TableCell className="truncate max-w-[180px]">{invoice.vendor}</TableCell>
                   <TableCell>{formatDate(invoice.date)}</TableCell>
                   <TableCell className="text-right">{formatCurrency(invoice.total)}</TableCell>
+                  <TableCell className="max-w-[180px]">
+                    {invoice.categories && invoice.categories.length > 0 ? (
+                      <div className="flex flex-wrap gap-1">
+                        {invoice.categories.map((category, index) => (
+                          <Badge key={index} variant="secondary">{category}</Badge>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">N/A</span>
+                    )}
+                  </TableCell>
                   <TableCell className="max-w-xs truncate hover:whitespace-normal hover:text-clip" title={invoice.summary}>
                      <p className="text-sm text-muted-foreground">{invoice.summary}</p>
                   </TableCell>

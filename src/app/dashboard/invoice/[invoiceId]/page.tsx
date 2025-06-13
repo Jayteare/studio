@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableCaption } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, ArrowLeft, FileText, CalendarDays, CircleDollarSign, Info, AlertTriangle, ExternalLink, Copy, FileSearch } from 'lucide-react';
+import { Loader2, ArrowLeft, FileText, CalendarDays, CircleDollarSign, Info, AlertTriangle, ExternalLink, Copy, FileSearch, Tag } from 'lucide-react';
 import { format } from 'date-fns';
 import Link from 'next/link';
 import { AppLogo } from '@/components/app-logo';
@@ -75,10 +75,8 @@ export default function InvoiceDetailPage() {
   const loadSimilarInvoices = useCallback(async () => {
     if (!invoice || !user?.id) return;
 
-    // Only try to load similar invoices if the current invoice has an embedding
     if (!invoice.summaryEmbedding || invoice.summaryEmbedding.length === 0) {
-        // setErrorSimilar("This invoice does not have data for similarity comparison.");
-        setSimilarInvoices([]); // Ensure it's empty
+        setSimilarInvoices([]);
         return;
     }
 
@@ -88,8 +86,6 @@ export default function InvoiceDetailPage() {
 
     if (response.error) {
       setErrorSimilar(response.error);
-      // Optionally, toast for this error too, or rely on the inline message
-      // toast({ title: 'Could Not Find Similar Invoices', description: response.error, variant: 'destructive' });
       setSimilarInvoices([]);
     } else if (response.similarInvoices) {
       setSimilarInvoices(response.similarInvoices);
@@ -232,6 +228,17 @@ export default function InvoiceDetailPage() {
               </p>
             </div>
 
+            {invoice.categories && invoice.categories.length > 0 && (
+                <div className="space-y-2">
+                    <Label className="text-sm text-muted-foreground flex items-center gap-1"><Tag className="h-4 w-4" /> AI Suggested Categories</Label>
+                    <div className="flex flex-wrap gap-2">
+                        {invoice.categories.map((category, index) => (
+                            <Badge key={index} variant="secondary">{category}</Badge>
+                        ))}
+                    </div>
+                </div>
+            )}
+
             {invoice.lineItems && invoice.lineItems.length > 0 && (
               <div className="space-y-2">
                 <Label className="text-sm text-muted-foreground">Line Items</Label>
@@ -306,6 +313,13 @@ export default function InvoiceDetailPage() {
                         <p className="text-sm text-muted-foreground mt-2 line-clamp-2" title={simInv.summary}>
                           {simInv.summary}
                         </p>
+                         {simInv.categories && simInv.categories.length > 0 && (
+                            <div className="mt-2 flex flex-wrap gap-1">
+                                {simInv.categories.map((category, idx) => (
+                                    <Badge key={idx} variant="outline" className="text-xs">{category}</Badge>
+                                ))}
+                            </div>
+                        )}
                       </CardContent>
                     </Card>
                   ))}
@@ -326,9 +340,12 @@ export default function InvoiceDetailPage() {
   );
 }
 
+// Re-define Label component locally as it's not exported from ui/label if not using Form context
+// Or ensure it's exported from a shared location if used across multiple non-form pages.
+// For simplicity here, keeping it local if only used on this page.
+// If `cn` is not defined, ensure `import { cn } from '@/lib/utils';` is present.
 const Label: React.FC<React.HTMLAttributes<HTMLLabelElement>> = ({ className, children, ...props }) => (
   <label className={cn("block text-sm font-medium text-muted-foreground", className)} {...props}>
     {children}
   </label>
 );
-
