@@ -15,7 +15,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { FileText, CalendarDays, CircleDollarSign, MessageSquareText, Info, Trash2, Settings } from 'lucide-react';
+import { FileText, CalendarDays, CircleDollarSign, MessageSquareText, Info, Trash2, Settings, FileIcon } from 'lucide-react';
 import { format } from 'date-fns';
 
 interface InvoiceListProps {
@@ -76,6 +76,11 @@ export function InvoiceList({ invoices, onDeleteInvoice }: InvoiceListProps) {
             <TableCaption>A list of your recently processed invoices.</TableCaption>
             <TableHeader>
               <TableRow>
+                <TableHead className="w-[250px]">
+                  <div className="flex items-center gap-2">
+                    <FileIcon className="h-4 w-4" /> File Name
+                  </div>
+                </TableHead>
                 <TableHead className="w-[200px]">
                   <div className="flex items-center gap-2">
                     <FileText className="h-4 w-4" /> Vendor
@@ -107,7 +112,8 @@ export function InvoiceList({ invoices, onDeleteInvoice }: InvoiceListProps) {
             <TableBody>
               {invoices.map((invoice) => (
                 <TableRow key={invoice.id}>
-                  <TableCell className="font-medium">{invoice.vendor}</TableCell>
+                  <TableCell className="font-medium truncate max-w-xs" title={invoice.fileName}>{invoice.fileName}</TableCell>
+                  <TableCell>{invoice.vendor}</TableCell>
                   <TableCell>{formatDate(invoice.date)}</TableCell>
                   <TableCell className="text-right">{formatCurrency(invoice.total)}</TableCell>
                   <TableCell className="max-w-xs truncate hover:whitespace-normal hover:text-clip" title={invoice.summary}>

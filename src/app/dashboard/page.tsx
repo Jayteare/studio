@@ -158,10 +158,12 @@ export default function DashboardPage() {
                 <p className="mt-4 text-muted-foreground">Loading your invoices...</p>
               </div>
             ) : (
-              <InvoiceList 
-                invoices={invoices} 
-                onDeleteInvoice={openDeleteConfirmDialog} 
-              />
+              <div className="animate-in fade-in-0 duration-500">
+                <InvoiceList 
+                  invoices={invoices} 
+                  onDeleteInvoice={openDeleteConfirmDialog} 
+                />
+              </div>
             )}
           </section>
         </main>
