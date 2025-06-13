@@ -14,6 +14,7 @@ export interface Invoice {
   lineItems: LineItem[];
   summary: string; // AI-generated summary
   summaryEmbedding?: number[]; // Vector embedding of the summary
+  categories?: string[]; // AI-suggested categories
   uploadedAt: string; // ISO string date
   gcsFileUri?: string; // GCS URI for the stored invoice file (e.g., gs://bucket/path/to/file)
   isDeleted?: boolean;

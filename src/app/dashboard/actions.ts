@@ -6,6 +6,7 @@ import { connectToDatabase } from '@/lib/mongodb';
 import { uploadFileToGCS } from '@/lib/gcs';
 import { extractInvoiceData, type ExtractInvoiceDataOutput } from '@/ai/flows/extract-invoice-data';
 import { summarizeInvoice, type SummarizeInvoiceOutput } from '@/ai/flows/summarize-invoice';
+import { categorizeInvoice, type CategorizeInvoiceInput, type CategorizeInvoiceOutput } from '@/ai/flows/categorize-invoice-flow';
 import { ai } from '@/ai/genkit';
 import type { Invoice, LineItem } from '@/types/invoice';
 
@@ -101,6 +102,14 @@ function mapDocumentToInvoice(doc: any): Invoice {
   if (!Array.isArray(doc.lineItems) && doc.lineItems !== undefined && doc.lineItems !== null) {
     console.warn(`lineItems is not an array for invoice ID ${id}:`, doc.lineItems);
   }
+  
+  const categories: string[] | undefined = Array.isArray(doc.categories) 
+    ? doc.categories.filter((cat: any) => typeof cat === 'string') 
+    : undefined;
+  if (doc.categories !== undefined && !Array.isArray(doc.categories)) {
+      console.warn(`categories is not an array for invoice ID ${id}:`, doc.categories);
+  }
+
 
   return {
     id,
@@ -112,6 +121,7 @@ function mapDocumentToInvoice(doc: any): Invoice {
     lineItems: lineItems,
     summary: typeof doc.summary === 'string' ? doc.summary : 'No summary available.',
     summaryEmbedding: Array.isArray(doc.summaryEmbedding) ? doc.summaryEmbedding as number[] : undefined,
+    categories: categories,
     uploadedAt: uploadedAtISO,
     gcsFileUri: typeof doc.gcsFileUri === 'string' ? doc.gcsFileUri : undefined,
     isDeleted: !!doc.isDeleted,
@@ -168,6 +178,22 @@ export async function handleInvoiceUpload(
     };
     const summarizedData: SummarizeInvoiceOutput = await summarizeInvoice(summaryInput);
 
+    let categories: string[] = ["Uncategorized"];
+    try {
+        const categorizationInput: CategorizeInvoiceInput = {
+            vendor: extractedData.vendor,
+            lineItems: extractedData.lineItems.map(item => ({ description: item.description, amount: item.amount})),
+        };
+        const categorizationOutput: CategorizeInvoiceOutput = await categorizeInvoice(categorizationInput);
+        if (categorizationOutput && categorizationOutput.categories && categorizationOutput.categories.length > 0) {
+            categories = categorizationOutput.categories;
+        }
+    } catch (catError: any) {
+        console.warn('Failed to categorize invoice:', catError.message);
+        // Proceed without categories or with a default
+    }
+
+
     let summaryEmbedding: number[] | undefined = undefined;
     if (summarizedData.summary) {
       try {
@@ -202,6 +228,7 @@ export async function handleInvoiceUpload(
       })),
       summary: summarizedData.summary,
       summaryEmbedding: summaryEmbedding,
+      categories: categories,
       uploadedAt: new Date(),
       gcsFileUri: gcsFileUri,
       isDeleted: false,
@@ -224,6 +251,7 @@ export async function handleInvoiceUpload(
       lineItems: extractedData.lineItems as LineItem[],
       summary: summarizedData.summary,
       summaryEmbedding: summaryEmbedding,
+      categories: categories,
       uploadedAt: invoiceDocumentForDb.uploadedAt.toISOString(),
       gcsFileUri: gcsFileUri,
       isDeleted: false,
@@ -231,10 +259,11 @@ export async function handleInvoiceUpload(
 
     return {
       invoice: newInvoice,
-      message: `Successfully processed ${file.name}. Data saved and file stored in Cloud Storage.`
+      message: `Successfully processed ${file.name}. Data saved, categorized, and file stored.`
     };
 
-  } catch (error: any) {
+  } catch (error: any)
+{
     console.error('Error processing invoice:', error);
     let errorMessage = 'An unexpected error occurred while processing the invoice.';
     if (error instanceof Error) {
@@ -611,4 +640,3 @@ export async function findSimilarInvoices(currentInvoiceId: string, userId: stri
     return { error: errorMessage };
   }
 }
-    
