@@ -6,7 +6,7 @@ import { connectToDatabase } from '@/lib/mongodb';
 import { uploadFileToGCS } from '@/lib/gcs';
 import { extractInvoiceData, type ExtractInvoiceDataOutput } from '@/ai/flows/extract-invoice-data';
 import { summarizeInvoice, type SummarizeInvoiceOutput } from '@/ai/flows/summarize-invoice';
-import { ai } from '@/ai/genkit'; // Import the Genkit ai instance
+import { ai } from '@/ai/genkit';
 import type { Invoice, LineItem } from '@/types/invoice';
 
 // Helper to convert File object to data URI and Buffer
@@ -29,6 +29,58 @@ export interface UploadInvoiceFormState {
 }
 
 const INVOICES_COLLECTION = 'uploaded_invoices';
+const ATLAS_VECTOR_SEARCH_INDEX_NAME = 'vector_index_summary'; // As configured in Atlas
+
+// Utility function to map MongoDB document to Invoice type
+function mapDocumentToInvoice(doc: any): Invoice {
+  let uploadedAtISO: string;
+  if (doc.uploadedAt instanceof Date) {
+    uploadedAtISO = doc.uploadedAt.toISOString();
+  } else if (typeof doc.uploadedAt === 'string') {
+    const parsedDate = new Date(doc.uploadedAt);
+    uploadedAtISO = !isNaN(parsedDate.getTime()) ? parsedDate.toISOString() : new Date(0).toISOString();
+    if (isNaN(parsedDate.getTime())) console.warn(`Invalid uploadedAt date format for invoice ID ${doc._id}: ${doc.uploadedAt}`);
+  } else {
+    console.warn(`Missing or invalid uploadedAt for invoice ID ${doc._id}`);
+    uploadedAtISO = new Date(0).toISOString();
+  }
+
+  let deletedAtISO: string | undefined = undefined;
+  if (doc.deletedAt instanceof Date) {
+    deletedAtISO = doc.deletedAt.toISOString();
+  } else if (typeof doc.deletedAt === 'string') {
+    const parsedDate = new Date(doc.deletedAt);
+    deletedAtISO = !isNaN(parsedDate.getTime()) ? parsedDate.toISOString() : undefined;
+    if (isNaN(parsedDate.getTime())) console.warn(`Invalid deletedAt date format for invoice ID ${doc._id}: ${doc.deletedAt}`);
+  } else if (doc.deletedAt) {
+    console.warn(`Invalid deletedAt type for invoice ID ${doc._id}: ${typeof doc.deletedAt}`);
+  }
+
+  const lineItems: LineItem[] = Array.isArray(doc.lineItems) ? doc.lineItems.map((item: any) => ({
+    description: item.description || 'N/A',
+    amount: typeof item.amount === 'number' ? item.amount : 0,
+  })) : [];
+  if (!Array.isArray(doc.lineItems)) {
+    console.warn(`lineItems is not an array for invoice ID ${doc._id}`);
+  }
+
+  return {
+    id: doc._id.toHexString(),
+    userId: doc.userId.toHexString(),
+    fileName: doc.fileName || 'Unknown File',
+    vendor: doc.vendor || 'Unknown Vendor',
+    date: doc.date || 'Unknown Date',
+    total: typeof doc.total === 'number' ? doc.total : 0,
+    lineItems: lineItems,
+    summary: doc.summary || 'No summary available.',
+    summaryEmbedding: doc.summaryEmbedding as number[] | undefined,
+    uploadedAt: uploadedAtISO,
+    gcsFileUri: doc.gcsFileUri,
+    isDeleted: !!doc.isDeleted,
+    deletedAt: deletedAtISO,
+  };
+}
+
 
 export async function handleInvoiceUpload(
   prevState: UploadInvoiceFormState | undefined,
@@ -78,19 +130,15 @@ export async function handleInvoiceUpload(
     };
     const summarizedData: SummarizeInvoiceOutput = await summarizeInvoice(summaryInput);
 
-    // Generate embedding for the summary
     let summaryEmbedding: number[] | undefined = undefined;
     if (summarizedData.summary) {
       try {
         const embeddingResponse = await ai.embed({
           content: summarizedData.summary,
-          // You can specify a model, e.g., model: 'text-embedding-004'
-          // If not specified, it uses the default embedding model configured in Genkit.
         });
         summaryEmbedding = embeddingResponse.embedding;
       } catch (embeddingError: any) {
         console.warn('Failed to generate summary embedding:', embeddingError.message);
-        // Continue without embedding if it fails, or return an error if critical
       }
     }
 
@@ -111,7 +159,7 @@ export async function handleInvoiceUpload(
         amount: item.amount,
       })),
       summary: summarizedData.summary,
-      summaryEmbedding: summaryEmbedding, // Store the embedding
+      summaryEmbedding: summaryEmbedding,
       uploadedAt: new Date(),
       gcsFileUri: gcsFileUri,
       isDeleted: false,
@@ -197,57 +245,9 @@ export async function fetchUserInvoices(userId: string): Promise<FetchInvoicesRe
       .sort({ uploadedAt: -1 })
       .toArray();
 
-
-    const invoices: Invoice[] = invoiceDocuments.map((doc) => {
-      let uploadedAtISO: string;
-      if (doc.uploadedAt instanceof Date) {
-        uploadedAtISO = doc.uploadedAt.toISOString();
-      } else if (typeof doc.uploadedAt === 'string') {
-        const parsedDate = new Date(doc.uploadedAt);
-        uploadedAtISO = !isNaN(parsedDate.getTime()) ? parsedDate.toISOString() : new Date(0).toISOString();
-        if (isNaN(parsedDate.getTime())) console.warn(`Invalid uploadedAt date format for invoice ID ${doc._id}: ${doc.uploadedAt}`);
-      } else {
-        console.warn(`Missing or invalid uploadedAt for invoice ID ${doc._id}`);
-        uploadedAtISO = new Date(0).toISOString();
-      }
-
-      let deletedAtISO: string | undefined = undefined;
-      if (doc.deletedAt instanceof Date) {
-        deletedAtISO = doc.deletedAt.toISOString();
-      } else if (typeof doc.deletedAt === 'string') {
-        const parsedDate = new Date(doc.deletedAt);
-        deletedAtISO = !isNaN(parsedDate.getTime()) ? parsedDate.toISOString() : undefined;
-        if (isNaN(parsedDate.getTime())) console.warn(`Invalid deletedAt date format for invoice ID ${doc._id}: ${doc.deletedAt}`);
-      } else if (doc.deletedAt) {
-        console.warn(`Invalid deletedAt type for invoice ID ${doc._id}: ${typeof doc.deletedAt}`);
-      }
-
-      const lineItems: LineItem[] = Array.isArray(doc.lineItems) ? doc.lineItems.map((item: any) => ({
-        description: item.description || 'N/A',
-        amount: typeof item.amount === 'number' ? item.amount : 0,
-      })) : [];
-      if (!Array.isArray(doc.lineItems)) {
-        console.warn(`lineItems is not an array for invoice ID ${doc._id}`);
-      }
-
-      return {
-        id: doc._id.toHexString(),
-        userId: doc.userId.toHexString(),
-        fileName: doc.fileName || 'Unknown File',
-        vendor: doc.vendor || 'Unknown Vendor',
-        date: doc.date || 'Unknown Date',
-        total: typeof doc.total === 'number' ? doc.total : 0,
-        lineItems: lineItems,
-        summary: doc.summary || 'No summary available.',
-        summaryEmbedding: doc.summaryEmbedding as number[] | undefined,
-        uploadedAt: uploadedAtISO,
-        gcsFileUri: doc.gcsFileUri,
-        isDeleted: !!doc.isDeleted,
-        deletedAt: deletedAtISO,
-      };
-    });
-
+    const invoices: Invoice[] = invoiceDocuments.map(mapDocumentToInvoice);
     return { invoices };
+
   } catch (error: any) {
     console.error('Error fetching invoices:', error.message, error.stack, error);
     let errorMessage = 'An unexpected error occurred while fetching invoices.';
@@ -334,60 +334,14 @@ export async function fetchInvoiceById(invoiceId: string, userId: string): Promi
     const doc = await db.collection(INVOICES_COLLECTION).findOne({
       _id: invoiceObjectId,
       userId: userObjectId,
-      isDeleted: { $ne: true } // Optionally, only fetch non-deleted invoices
+      isDeleted: { $ne: true }
     });
 
     if (!doc) {
       return { error: 'Invoice not found or you do not have permission to view it.' };
     }
-
-    let uploadedAtISO: string;
-    if (doc.uploadedAt instanceof Date) {
-      uploadedAtISO = doc.uploadedAt.toISOString();
-    } else if (typeof doc.uploadedAt === 'string') {
-      const parsedDate = new Date(doc.uploadedAt);
-      uploadedAtISO = !isNaN(parsedDate.getTime()) ? parsedDate.toISOString() : new Date(0).toISOString();
-      if (isNaN(parsedDate.getTime())) console.warn(`Invalid uploadedAt date format for invoice ID ${doc._id}: ${doc.uploadedAt}`);
-    } else {
-      console.warn(`Missing or invalid uploadedAt for invoice ID ${doc._id}`);
-      uploadedAtISO = new Date(0).toISOString();
-    }
-
-    let deletedAtISO: string | undefined = undefined;
-    if (doc.deletedAt instanceof Date) {
-      deletedAtISO = doc.deletedAt.toISOString();
-    } else if (typeof doc.deletedAt === 'string') {
-      const parsedDate = new Date(doc.deletedAt);
-      deletedAtISO = !isNaN(parsedDate.getTime()) ? parsedDate.toISOString() : undefined;
-      if (isNaN(parsedDate.getTime())) console.warn(`Invalid deletedAt date format for invoice ID ${doc._id}: ${doc.deletedAt}`);
-    } else if (doc.deletedAt) {
-      console.warn(`Invalid deletedAt type for invoice ID ${doc._id}: ${typeof doc.deletedAt}`);
-    }
-
-    const lineItems: LineItem[] = Array.isArray(doc.lineItems) ? doc.lineItems.map((item: any) => ({
-      description: item.description || 'N/A',
-      amount: typeof item.amount === 'number' ? item.amount : 0,
-    })) : [];
-    if (!Array.isArray(doc.lineItems)) {
-      console.warn(`lineItems is not an array for invoice ID ${doc._id}`);
-    }
-
-    const invoice: Invoice = {
-      id: doc._id.toHexString(),
-      userId: doc.userId.toHexString(),
-      fileName: doc.fileName || 'Unknown File',
-      vendor: doc.vendor || 'Unknown Vendor',
-      date: doc.date || 'Unknown Date',
-      total: typeof doc.total === 'number' ? doc.total : 0,
-      lineItems: lineItems,
-      summary: doc.summary || 'No summary available.',
-      summaryEmbedding: doc.summaryEmbedding as number[] | undefined,
-      uploadedAt: uploadedAtISO,
-      gcsFileUri: doc.gcsFileUri,
-      isDeleted: !!doc.isDeleted,
-      deletedAt: deletedAtISO,
-    };
-
+    
+    const invoice = mapDocumentToInvoice(doc);
     return { invoice };
 
   } catch (error: any) {
@@ -397,6 +351,74 @@ export async function fetchInvoiceById(invoiceId: string, userId: string): Promi
       errorMessage = 'Invalid ID format for fetching the invoice.';
     } else if (error.message) {
       errorMessage = `Failed to fetch invoice details: ${error.message}`;
+    }
+    return { error: errorMessage };
+  }
+}
+
+export interface SearchInvoicesResponse {
+  invoices?: Invoice[];
+  error?: string;
+}
+
+export async function searchInvoices(userId: string, searchText: string): Promise<SearchInvoicesResponse> {
+  if (!userId) {
+    return { error: 'User ID is required to search invoices.' };
+  }
+  if (!searchText || searchText.trim() === '') {
+    // If search text is empty, return all user invoices (similar to fetchUserInvoices)
+    return fetchUserInvoices(userId);
+  }
+
+  try {
+    const { db } = await connectToDatabase();
+    let userObjectId;
+    try {
+      userObjectId = new ObjectId(userId);
+    } catch (e) {
+      return { error: 'Invalid User ID format.' };
+    }
+
+    const queryEmbeddingResponse = await ai.embed({ content: searchText });
+    const queryVector = queryEmbeddingResponse.embedding;
+
+    if (!queryVector) {
+      return { error: 'Failed to generate embedding for search query.' };
+    }
+    
+    const pipeline = [
+      {
+        $vectorSearch: {
+          index: ATLAS_VECTOR_SEARCH_INDEX_NAME,
+          path: 'summaryEmbedding',
+          queryVector: queryVector,
+          numCandidates: 100, // Number of candidates to consider
+          limit: 10, // Number of results to return
+          filter: {
+            userId: userObjectId,
+            isDeleted: { $ne: true },
+          },
+        },
+      },
+      // Optionally, add a $project stage if you need to reshape the document
+      // or ensure all fields match the Invoice type perfectly if $vectorSearch alters structure.
+      // For now, we assume $vectorSearch returns documents compatible with mapDocumentToInvoice
+    ];
+
+    const searchedDocuments = await db.collection(INVOICES_COLLECTION).aggregate(pipeline).toArray();
+    
+    const invoices: Invoice[] = searchedDocuments.map(mapDocumentToInvoice);
+    
+    return { invoices };
+
+  } catch (error: any) {
+    console.error('Error searching invoices:', error);
+    let errorMessage = 'An unexpected error occurred during search.';
+    if (error.message) {
+        errorMessage = `Search failed: ${error.message}`;
+    }
+    if (error.toString().includes('index not found') || error.toString().includes(ATLAS_VECTOR_SEARCH_INDEX_NAME)) {
+        errorMessage = `Search failed: The required vector search index "${ATLAS_VECTOR_SEARCH_INDEX_NAME}" may not exist or is not configured correctly in MongoDB Atlas.`;
     }
     return { error: errorMessage };
   }

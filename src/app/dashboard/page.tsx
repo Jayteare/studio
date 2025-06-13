@@ -1,17 +1,18 @@
 
 "use client";
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, FormEvent } from 'react';
 import { useAuth } from '@/hooks/use-auth';
 import { useRouter } from 'next/navigation';
 import { InvoiceUploadForm } from '@/components/invoice-upload-form';
 import { InvoiceList } from '@/components/invoice-list';
 import type { Invoice } from '@/types/invoice';
 import { Button } from '@/components/ui/button';
-import { Loader2, LogOut } from 'lucide-react';
+import { Input } from '@/components/ui/input';
+import { Loader2, LogOut, Search, XCircle } from 'lucide-react';
 import { AppLogo } from '@/components/app-logo';
 import { Separator } from '@/components/ui/separator';
-import { fetchUserInvoices, softDeleteInvoice, type FetchInvoicesResponse, type SoftDeleteResponse } from './actions';
+import { fetchUserInvoices, softDeleteInvoice, searchInvoices, type FetchInvoicesResponse, type SoftDeleteResponse, type SearchInvoicesResponse } from './actions';
 import { useToast } from '@/hooks/use-toast';
 import {
   AlertDialog,
@@ -28,8 +29,11 @@ export default function DashboardPage() {
   const { user, isAuthenticated, isLoading: authIsLoading, logout } = useAuth();
   const router = useRouter();
   const { toast } = useToast();
+  
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [invoicesLoading, setInvoicesLoading] = useState(true);
+  const [isSearching, setIsSearching] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
 
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [invoiceToDelete, setInvoiceToDelete] = useState<Invoice | null>(null);
@@ -44,6 +48,7 @@ export default function DashboardPage() {
   const loadInvoices = useCallback(async () => {
     if (isAuthenticated && user?.id) {
       setInvoicesLoading(true);
+      setIsSearching(false); // Reset search state
       const response: FetchInvoicesResponse = await fetchUserInvoices(user.id);
       if (response.error) {
         toast({
@@ -64,12 +69,67 @@ export default function DashboardPage() {
 
 
   useEffect(() => {
-    loadInvoices();
-  }, [loadInvoices]);
+    // Load all invoices initially or if search query is cleared
+    if (!searchQuery) {
+        loadInvoices();
+    }
+  }, [loadInvoices, searchQuery]); // Rerun if searchQuery becomes empty
+
+  const handleSearchSubmit = async (e?: FormEvent) => {
+    e?.preventDefault();
+    if (!searchQuery.trim()) {
+      loadInvoices(); // If search is empty, load all invoices
+      return;
+    }
+    if (!user?.id) return;
+
+    setIsSearching(true);
+    setInvoicesLoading(true); // Use general loading state for simplicity or create a dedicated search loading
+    const response: SearchInvoicesResponse = await searchInvoices(user.id, searchQuery);
+    
+    if (response.error) {
+      toast({
+        title: 'Search Failed',
+        description: response.error,
+        variant: 'destructive',
+      });
+      setInvoices([]); // Clear invoices or keep previous? For now, clear.
+    } else if (response.invoices) {
+      setInvoices(response.invoices);
+      if (response.invoices.length === 0) {
+        toast({
+          title: 'No Results',
+          description: 'No invoices matched your search query.',
+          variant: 'default',
+        });
+      }
+    }
+    setIsSearching(false);
+    setInvoicesLoading(false);
+  };
+
+  const clearSearch = () => {
+    setSearchQuery('');
+    // useEffect will trigger loadInvoices
+  };
 
   const handleInvoiceUploaded = useCallback((newInvoice: Invoice) => {
-    setInvoices((prevInvoices) => [newInvoice, ...prevInvoices]);
-  }, []);
+    // If currently searching, a new upload might not fit search criteria.
+    // Simplest is to reload all or add to top if not searching.
+    if (searchQuery) {
+        // Optionally, you could try to match newInvoice against searchQuery locally
+        // or just inform user their view might be filtered.
+        // For now, let's add to current view and user can re-search/clear.
+         setInvoices((prevInvoices) => [newInvoice, ...prevInvoices]);
+         toast({
+            title: 'Invoice Uploaded',
+            description: `${newInvoice.fileName} is added. Your current view might be filtered by search. Clear search to see all.`,
+            variant: 'default'
+         })
+    } else {
+        setInvoices((prevInvoices) => [newInvoice, ...prevInvoices]);
+    }
+  }, [searchQuery, toast]);
 
   const handleLogout = async () => {
     await logout();
@@ -103,7 +163,7 @@ export default function DashboardPage() {
   };
 
 
-  if (authIsLoading) {
+  if (authIsLoading && !user) { // Show loading only if user is not yet available
     return (
       <div className="flex min-h-screen flex-col items-center justify-center bg-background p-4">
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
@@ -152,10 +212,30 @@ export default function DashboardPage() {
           <Separator className="my-8" />
 
           <section>
-            {invoicesLoading ? (
+            <form onSubmit={handleSearchSubmit} className="mb-8 flex gap-2 items-center">
+              <Input
+                type="search"
+                placeholder="Search invoice summaries (e.g., 'office supplies from ACME')"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="flex-grow"
+                aria-label="Search invoices"
+              />
+              {searchQuery && (
+                <Button type="button" variant="ghost" size="icon" onClick={clearSearch} aria-label="Clear search">
+                  <XCircle className="h-5 w-5" />
+                </Button>
+              )}
+              <Button type="submit" disabled={isSearching || invoicesLoading}>
+                {isSearching ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Search className="mr-2 h-4 w-4" />}
+                Search
+              </Button>
+            </form>
+
+            {(invoicesLoading || isSearching) ? (
               <div className="flex flex-col items-center justify-center py-10">
                 <Loader2 className="h-10 w-10 animate-spin text-primary" />
-                <p className="mt-4 text-muted-foreground">Loading your invoices...</p>
+                <p className="mt-4 text-muted-foreground">{isSearching ? 'Searching invoices...' : 'Loading your invoices...'}</p>
               </div>
             ) : (
               <div className="animate-in fade-in-0 duration-500">
