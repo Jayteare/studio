@@ -77,12 +77,12 @@ export function InvoiceList({ invoices, onDeleteInvoice }: InvoiceListProps) {
             <TableCaption>A list of your recently processed invoices. Click on a file name for details.</TableCaption>
             <TableHeader>
               <TableRow>
-                <TableHead className="w-[200px]">
+                <TableHead className="w-[250px]">
                   <div className="flex items-center gap-2">
                     <FileIcon className="h-4 w-4" /> File Name
                   </div>
                 </TableHead>
-                <TableHead className="w-[180px]">
+                <TableHead className="w-[200px]">
                   <div className="flex items-center gap-2">
                     <FileText className="h-4 w-4" /> Vendor
                   </div>
@@ -97,7 +97,7 @@ export function InvoiceList({ invoices, onDeleteInvoice }: InvoiceListProps) {
                     <CircleDollarSign className="h-4 w-4" /> Total
                   </div>
                 </TableHead>
-                <TableHead className="w-[180px]">
+                <TableHead className="w-[220px]">
                   <div className="flex items-center gap-2">
                     <Tag className="h-4 w-4" /> Categories
                   </div>
@@ -118,15 +118,15 @@ export function InvoiceList({ invoices, onDeleteInvoice }: InvoiceListProps) {
             <TableBody>
               {invoices.map((invoice) => (
                 <TableRow key={invoice.id}>
-                  <TableCell className="font-medium truncate max-w-[200px]">
+                  <TableCell className="font-medium truncate max-w-[250px]">
                     <Link href={`/dashboard/invoice/${invoice.id}`} className="hover:underline text-primary" title={invoice.fileName}>
                       {invoice.fileName}
                     </Link>
                   </TableCell>
-                  <TableCell className="truncate max-w-[180px] font-medium">{invoice.vendor}</TableCell>
+                  <TableCell className="truncate max-w-[200px] font-medium">{invoice.vendor}</TableCell>
                   <TableCell>{formatDate(invoice.date)}</TableCell>
                   <TableCell className="text-right font-semibold text-primary w-[120px]">{formatCurrency(invoice.total)}</TableCell>
-                  <TableCell className="max-w-[180px]">
+                  <TableCell className="max-w-[220px]">
                     {invoice.categories && invoice.categories.length > 0 ? (
                       <div className="flex flex-wrap gap-1">
                         {invoice.categories.map((category, index) => (
@@ -137,7 +137,7 @@ export function InvoiceList({ invoices, onDeleteInvoice }: InvoiceListProps) {
                       <span className="text-xs text-muted-foreground">N/A</span>
                     )}
                   </TableCell>
-                  <TableCell className="max-w-sm truncate hover:whitespace-normal hover:text-clip" title={invoice.summary}>
+                  <TableCell className="max-w-lg truncate hover:whitespace-normal hover:text-clip" title={invoice.summary}>
                      <p className="text-sm text-muted-foreground">{invoice.summary}</p>
                   </TableCell>
                   <TableCell>
@@ -163,3 +163,4 @@ export function InvoiceList({ invoices, onDeleteInvoice }: InvoiceListProps) {
     </Card>
   );
 }
+
