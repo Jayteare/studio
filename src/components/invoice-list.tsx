@@ -77,27 +77,27 @@ export function InvoiceList({ invoices, onDeleteInvoice }: InvoiceListProps) {
             <TableCaption>A list of your recently processed invoices. Click on a file name for details.</TableCaption>
             <TableHeader>
               <TableRow>
-                <TableHead className="w-[250px]">
+                <TableHead className="min-w-[280px] max-w-md">
                   <div className="flex items-center gap-2">
                     <FileIcon className="h-4 w-4" /> File Name
                   </div>
                 </TableHead>
-                <TableHead className="w-[200px]">
+                <TableHead className="min-w-[220px] max-w-sm">
                   <div className="flex items-center gap-2">
                     <FileText className="h-4 w-4" /> Vendor
                   </div>
                 </TableHead>
-                <TableHead className="w-[120px]">
+                <TableHead className="w-[130px]">
                   <div className="flex items-center gap-2">
                     <CalendarDays className="h-4 w-4" /> Date
                   </div>
                 </TableHead>
-                <TableHead className="text-right w-[120px]">
+                <TableHead className="text-right w-[140px]">
                   <div className="flex items-center justify-end gap-2">
                     <CircleDollarSign className="h-4 w-4" /> Total
                   </div>
                 </TableHead>
-                <TableHead className="w-[220px]">
+                <TableHead className="min-w-[250px] max-w-lg">
                   <div className="flex items-center gap-2">
                     <Tag className="h-4 w-4" /> Categories
                   </div>
@@ -107,8 +107,8 @@ export function InvoiceList({ invoices, onDeleteInvoice }: InvoiceListProps) {
                     <MessageSquareText className="h-4 w-4" /> Summary Insight
                   </div>
                 </TableHead>
-                 <TableHead className="w-[120px]">Uploaded</TableHead>
-                 <TableHead className="w-[80px] text-center">
+                 <TableHead className="w-[130px]">Uploaded</TableHead>
+                 <TableHead className="w-[100px] text-center">
                     <div className="flex items-center justify-center gap-2">
                         <Settings className="h-4 w-4" /> Actions
                     </div>
@@ -118,15 +118,15 @@ export function InvoiceList({ invoices, onDeleteInvoice }: InvoiceListProps) {
             <TableBody>
               {invoices.map((invoice) => (
                 <TableRow key={invoice.id}>
-                  <TableCell className="font-medium truncate max-w-[250px]">
+                  <TableCell className="font-medium truncate max-w-md">
                     <Link href={`/dashboard/invoice/${invoice.id}`} className="hover:underline text-primary" title={invoice.fileName}>
                       {invoice.fileName}
                     </Link>
                   </TableCell>
-                  <TableCell className="truncate max-w-[200px] font-medium">{invoice.vendor}</TableCell>
+                  <TableCell className="truncate max-w-sm font-medium">{invoice.vendor}</TableCell>
                   <TableCell>{formatDate(invoice.date)}</TableCell>
-                  <TableCell className="text-right font-semibold text-primary w-[120px]">{formatCurrency(invoice.total)}</TableCell>
-                  <TableCell className="max-w-[220px]">
+                  <TableCell className="text-right font-semibold text-primary">{formatCurrency(invoice.total)}</TableCell>
+                  <TableCell className="max-w-lg">
                     {invoice.categories && invoice.categories.length > 0 ? (
                       <div className="flex flex-wrap gap-1">
                         {invoice.categories.map((category, index) => (
@@ -137,8 +137,8 @@ export function InvoiceList({ invoices, onDeleteInvoice }: InvoiceListProps) {
                       <span className="text-xs text-muted-foreground">N/A</span>
                     )}
                   </TableCell>
-                  <TableCell className="max-w-lg truncate hover:whitespace-normal hover:text-clip" title={invoice.summary}>
-                     <p className="text-sm text-muted-foreground">{invoice.summary}</p>
+                  <TableCell className="text-sm text-muted-foreground truncate hover:whitespace-normal hover:text-clip" title={invoice.summary}>
+                     {invoice.summary}
                   </TableCell>
                   <TableCell>
                     <Badge variant="outline">{format(new Date(invoice.uploadedAt), 'MMM dd, yyyy')}</Badge>
@@ -163,4 +163,3 @@ export function InvoiceList({ invoices, onDeleteInvoice }: InvoiceListProps) {
     </Card>
   );
 }
-
