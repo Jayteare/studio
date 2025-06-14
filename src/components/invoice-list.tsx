@@ -92,7 +92,7 @@ export function InvoiceList({ invoices, onDeleteInvoice }: InvoiceListProps) {
                     <CalendarDays className="h-4 w-4" /> Date
                   </div>
                 </TableHead>
-                <TableHead className="text-right w-[100px]">
+                <TableHead className="text-right w-[120px]">
                   <div className="flex items-center justify-end gap-2">
                     <CircleDollarSign className="h-4 w-4" /> Total
                   </div>
@@ -123,9 +123,9 @@ export function InvoiceList({ invoices, onDeleteInvoice }: InvoiceListProps) {
                       {invoice.fileName}
                     </Link>
                   </TableCell>
-                  <TableCell className="truncate max-w-[180px]">{invoice.vendor}</TableCell>
+                  <TableCell className="truncate max-w-[180px] font-medium">{invoice.vendor}</TableCell>
                   <TableCell>{formatDate(invoice.date)}</TableCell>
-                  <TableCell className="text-right">{formatCurrency(invoice.total)}</TableCell>
+                  <TableCell className="text-right font-semibold text-primary w-[120px]">{formatCurrency(invoice.total)}</TableCell>
                   <TableCell className="max-w-[180px]">
                     {invoice.categories && invoice.categories.length > 0 ? (
                       <div className="flex flex-wrap gap-1">
@@ -137,7 +137,7 @@ export function InvoiceList({ invoices, onDeleteInvoice }: InvoiceListProps) {
                       <span className="text-xs text-muted-foreground">N/A</span>
                     )}
                   </TableCell>
-                  <TableCell className="max-w-xs truncate hover:whitespace-normal hover:text-clip" title={invoice.summary}>
+                  <TableCell className="max-w-sm truncate hover:whitespace-normal hover:text-clip" title={invoice.summary}>
                      <p className="text-sm text-muted-foreground">{invoice.summary}</p>
                   </TableCell>
                   <TableCell>
