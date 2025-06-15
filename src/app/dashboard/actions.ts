@@ -806,3 +806,74 @@ export async function findSimilarInvoices(currentInvoiceId: string, userId: stri
   }
 }
 
+export interface SpendingByCategory {
+  category: string;
+  totalSpent: number;
+}
+
+export interface FetchSpendingDistributionResponse {
+  data?: SpendingByCategory[];
+  error?: string;
+}
+
+export async function fetchSpendingDistribution(userId: string): Promise<FetchSpendingDistributionResponse> {
+  if (!userId) {
+    return { error: 'User ID is required to fetch spending distribution.' };
+  }
+
+  try {
+    const { db } = await connectToDatabase();
+    const userObjectId = new ObjectId(userId);
+
+    const pipeline = [
+      {
+        $match: {
+          userId: userObjectId,
+          isDeleted: { $ne: true },
+          categories: { $exists: true, $ne: [] } // Ensure categories exist and are not empty
+        }
+      },
+      {
+        $unwind: '$categories' // Creates a new document for each category in the array
+      },
+      {
+        $group: {
+          _id: '$categories', // Group by the unwound category
+          totalSpent: { $sum: '$total' } // Sum the total of invoices for each category
+        }
+      },
+      {
+        $project: {
+          _id: 0, // Exclude the default _id field
+          category: '$_id', // Rename _id to category
+          totalSpent: 1
+        }
+      },
+      {
+        $sort: { totalSpent: -1 } // Sort by total spent in descending order
+      }
+    ];
+
+    const result = await db.collection(INVOICES_COLLECTION).aggregate(pipeline).toArray();
+    
+    const data: SpendingByCategory[] = result.map(item => ({
+        category: item.category as string,
+        totalSpent: item.totalSpent as number,
+    }));
+
+    return { data };
+
+  } catch (error: any) {
+    console.error('Error fetching spending distribution:', error);
+    let errorMessage = 'An unexpected error occurred while fetching spending distribution.';
+    if (error instanceof Error) {
+      errorMessage = `Failed to fetch spending distribution: ${error.message}`;
+      if (error.name === 'BSONError') {
+        errorMessage = 'Invalid User ID format for fetching spending distribution.';
+      }
+    } else if (typeof error === 'string') {
+      errorMessage = `Failed to fetch spending distribution: ${error}`;
+    }
+    return { error: errorMessage };
+  }
+}
