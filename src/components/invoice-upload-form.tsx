@@ -86,7 +86,7 @@ export function InvoiceUploadForm({ onInvoiceUploaded, userId }: InvoiceUploadFo
               ref={fileInputRef}
               required
               accept=".pdf,.jpg,.jpeg,.png,.webp"
-              className="file:mr-4 file:rounded-full file:border-0 file:bg-primary file:px-4 file:py-2 file:text-sm file:font-semibold file:text-primary-foreground hover:file:bg-primary/90"
+              className="file:mr-4 file:rounded-full file:border-0 file:bg-primary file:px-4 file:py-1 file:text-sm file:font-semibold file:text-primary-foreground hover:file:bg-primary/90"
             />
             <p className="text-sm text-muted-foreground">
               Supported formats: PDF, JPG, PNG, WEBP. Max size: 10MB.
