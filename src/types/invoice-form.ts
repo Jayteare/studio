@@ -10,6 +10,8 @@ export const ManualInvoiceEntrySchema = z.object({
     description: z.string().min(1, "Line item description is required."),
     amount: z.coerce.number().positive("Line item amount must be a positive number."),
   })).min(1, "At least one line item is required."),
+  isMonthlyRecurring: z.boolean().optional().default(false),
 });
 
 export type ManualInvoiceEntryData = z.infer<typeof ManualInvoiceEntrySchema>;
+

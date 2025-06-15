@@ -316,7 +316,7 @@ export interface ManualInvoiceFormState {
     invoice?: Invoice;
     error?: string;
     message?: string;
-    errors?: Partial<Record<keyof ManualInvoiceEntryData | `lineItems.${number}.description` | `lineItems.${number}.amount`, string[]>>;
+    errors?: Partial<Record<keyof ManualInvoiceEntryData | `lineItems.${number}.description` | `lineItems.${number}.amount` | 'isMonthlyRecurring', string[]>>;
 }
 
 
@@ -328,16 +328,17 @@ export async function handleManualInvoiceEntry(
   const rawFormData = {
     userId: formData.get('userId') as string,
     vendor: formData.get('vendor') as string,
-    date: formData.get('invoiceDate') as string, // Note: form field name is invoiceDate
-    total: formData.get('total') as string, // Will be coerced by Zod
+    date: formData.get('invoiceDate') as string, 
+    total: formData.get('total') as string,
     lineItems: [] as { description: string; amount: string }[],
+    isMonthlyRecurring: formData.get('isMonthlyRecurring') === 'true',
   };
 
   let i = 0;
   while (formData.has(`lineItems[${i}].description`)) {
     rawFormData.lineItems.push({
       description: formData.get(`lineItems[${i}].description`) as string,
-      amount: formData.get(`lineItems[${i}].amount`) as string, // Will be coerced
+      amount: formData.get(`lineItems[${i}].amount`) as string, 
     });
     i++;
   }
@@ -346,11 +347,12 @@ export async function handleManualInvoiceEntry(
     userId: rawFormData.userId,
     vendor: rawFormData.vendor,
     date: rawFormData.date,
-    total: parseFloat(rawFormData.total), // Attempt to parse before Zod for better Zod error
+    total: parseFloat(rawFormData.total), 
     lineItems: rawFormData.lineItems.map(li => ({
         description: li.description,
-        amount: parseFloat(li.amount) // Attempt to parse
-    }))
+        amount: parseFloat(li.amount) 
+    })),
+    isMonthlyRecurring: rawFormData.isMonthlyRecurring,
   });
 
   if (!validatedFields.success) {
@@ -368,7 +370,7 @@ export async function handleManualInvoiceEntry(
     };
   }
 
-  const { userId, vendor, date, total, lineItems } = validatedFields.data;
+  const { userId, vendor, date, total, lineItems, isMonthlyRecurring } = validatedFields.data;
 
   try {
     const summaryInput: SummarizeInvoiceInput = { vendor, date, total, lineItems };
@@ -386,12 +388,21 @@ export async function handleManualInvoiceEntry(
     }
 
     let recurrenceInfo: DetectRecurrenceOutput = { isLikelyRecurring: false };
-    try {
-      const recurrenceInput: DetectRecurrenceInput = { vendor, lineItems };
-      recurrenceInfo = await detectRecurrence(recurrenceInput);
-    } catch (recError: any) {
-      console.warn('Failed to detect recurrence for manual invoice:', recError.message);
+    if (isMonthlyRecurring) {
+        recurrenceInfo = {
+            isLikelyRecurring: true,
+            reasoning: "User marked as monthly recurring."
+        };
+    } else {
+        try {
+            const recurrenceInput: DetectRecurrenceInput = { vendor, lineItems };
+            recurrenceInfo = await detectRecurrence(recurrenceInput);
+        } catch (recError: any) {
+            console.warn('Failed to detect recurrence for manual invoice:', recError.message);
+            // Keep default recurrenceInfo if AI detection fails
+        }
     }
+
 
     let summaryEmbedding: number[] | undefined = undefined;
     if (summarizedData.summary) {
@@ -408,14 +419,14 @@ export async function handleManualInvoiceEntry(
     }
 
     const formattedDate = new Date(date).toISOString().split('T')[0];
-    const fileName = `Manual - ${vendor} - ${formattedDate}.json`; // Indicate it's a manual entry data file
+    const fileName = `Manual - ${vendor} - ${formattedDate}.json`; 
 
     const { db } = await connectToDatabase();
     const invoiceDocumentForDb = {
       userId: new ObjectId(userId),
       fileName,
       vendor,
-      date, // Store original date string for consistency, or format as ISO
+      date, 
       total,
       lineItems,
       summary: summarizedData.summary,
@@ -424,7 +435,7 @@ export async function handleManualInvoiceEntry(
       isLikelyRecurring: recurrenceInfo.isLikelyRecurring,
       recurrenceReasoning: recurrenceInfo.reasoning,
       uploadedAt: new Date(),
-      gcsFileUri: undefined, // No file for manual entry
+      gcsFileUri: undefined, 
       isDeleted: false,
       deletedAt: null,
     };
@@ -760,8 +771,8 @@ export async function findSimilarInvoices(currentInvoiceId: string, userId: stri
           index: ATLAS_VECTOR_SEARCH_INDEX_NAME,
           path: 'summaryEmbedding',
           queryVector: queryVector,
-          numCandidates: 50, // Number of candidates to consider
-          limit: 6, // Return top 5 similar + current one (which we'll filter out)
+          numCandidates: 50, 
+          limit: 6, 
           filter: {
             userId: userObjectId,
             isDeleted: { $ne: true },
@@ -769,12 +780,12 @@ export async function findSimilarInvoices(currentInvoiceId: string, userId: stri
           },
         },
       },
-      { // Exclude the current invoice itself from the results
+      { 
         $match: {
             _id: { $ne: currentInvoiceObjectId }
         }
       },
-      { // Optionally, limit again to ensure only 5 results if current invoice was in top N.
+      { 
           $limit: 5 
       }
     ];
@@ -830,27 +841,27 @@ export async function fetchSpendingDistribution(userId: string): Promise<FetchSp
         $match: {
           userId: userObjectId,
           isDeleted: { $ne: true },
-          categories: { $exists: true, $ne: [] } // Ensure categories exist and are not empty
+          categories: { $exists: true, $ne: [] } 
         }
       },
       {
-        $unwind: '$categories' // Creates a new document for each category in the array
+        $unwind: '$categories' 
       },
       {
         $group: {
-          _id: '$categories', // Group by the unwound category
-          totalSpent: { $sum: '$total' } // Sum the total of invoices for each category
+          _id: '$categories', 
+          totalSpent: { $sum: '$total' } 
         }
       },
       {
         $project: {
-          _id: 0, // Exclude the default _id field
-          category: '$_id', // Rename _id to category
+          _id: 0, 
+          category: '$_id', 
           totalSpent: 1
         }
       },
       {
-        $sort: { totalSpent: -1 } // Sort by total spent in descending order
+        $sort: { totalSpent: -1 } 
       }
     ];
 

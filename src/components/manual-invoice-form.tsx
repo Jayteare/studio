@@ -10,11 +10,11 @@ import type { Invoice } from '@/types/invoice';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox'; // Added Checkbox import
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter, DialogClose } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Loader2, PlusCircle, Save, Trash2, X } from 'lucide-react';
+import { Loader2, PlusCircle, Save, Trash2, CalendarIcon, RefreshCw } from 'lucide-react'; // Added RefreshCw icon
 import { useToast } from '@/hooks/use-toast';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Calendar } from '@/components/ui/calendar';
@@ -30,29 +30,6 @@ export interface ManualInvoiceFormProps {
 }
 
 type FormData = ManualInvoiceEntryData;
-
-function SubmitButton() {
-  // react-hook-form's formState.isSubmitting can be used if not using useActionState directly with form
-  // For useActionState, pending comes from the action state hook directly if we pass it.
-  // Since we are using react-hook-form for submission handling before calling server action,
-  // we'll use its `formState.isSubmitting`.
-  const { formState: { isSubmitting } } = useForm<FormData>();
-  return (
-    <Button type="submit" disabled={isSubmitting} className="w-full sm:w-auto">
-      {isSubmitting ? (
-        <>
-          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-          Saving...
-        </>
-      ) : (
-        <>
-          <Save className="mr-2 h-4 w-4" />
-          Save Invoice
-        </>
-      )}
-    </Button>
-  );
-}
 
 
 export function ManualInvoiceForm({ userId, onInvoiceAdded, isOpen, onOpenChange }: ManualInvoiceFormProps) {
@@ -75,6 +52,7 @@ export function ManualInvoiceForm({ userId, onInvoiceAdded, isOpen, onOpenChange
       date: new Date().toISOString().split('T')[0], // Default to today
       total: 0,
       lineItems: [{ description: '', amount: 0 }],
+      isMonthlyRecurring: false,
     },
   });
 
@@ -83,7 +61,7 @@ export function ManualInvoiceForm({ userId, onInvoiceAdded, isOpen, onOpenChange
     name: 'lineItems',
   });
   
-  const lineItemsWatch = watch('lineItems'); // For calculating total
+  const lineItemsWatch = watch('lineItems'); 
 
   useEffect(() => {
     const calculatedTotal = lineItemsWatch.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
@@ -98,7 +76,6 @@ export function ManualInvoiceForm({ userId, onInvoiceAdded, isOpen, onOpenChange
         description: actionState.error,
         variant: 'destructive',
       });
-      // If actionState.errors (field-specific from Zod) exists, RHF errors will show them
     }
     if (actionState?.invoice) {
       toast({
@@ -107,32 +84,54 @@ export function ManualInvoiceForm({ userId, onInvoiceAdded, isOpen, onOpenChange
         variant: 'default',
       });
       onInvoiceAdded(actionState.invoice);
-      reset(); // Reset form fields
-      onOpenChange(false); // Close dialog
+      reset({ // Reset with userId and default date/recurring status
+        userId: userId,
+        vendor: '',
+        date: new Date().toISOString().split('T')[0],
+        total: 0,
+        lineItems: [{ description: '', amount: 0 }],
+        isMonthlyRecurring: false,
+      });
+      onOpenChange(false); 
     }
-  }, [actionState, toast, onInvoiceAdded, reset, onOpenChange]);
+  }, [actionState, toast, onInvoiceAdded, reset, onOpenChange, userId]);
 
   const processForm = async (data: FormData) => {
-    const formData = new FormData();
-    formData.append('userId', data.userId);
-    formData.append('vendor', data.vendor);
-    formData.append('invoiceDate', data.date); // Ensure this matches action's expected field name
-    formData.append('total', data.total.toString());
+    const formDataPayload = new FormData();
+    formDataPayload.append('userId', data.userId);
+    formDataPayload.append('vendor', data.vendor);
+    formDataPayload.append('invoiceDate', data.date); 
+    formDataPayload.append('total', data.total.toString());
     data.lineItems.forEach((item, index) => {
-      formData.append(`lineItems[${index}].description`, item.description);
-      formData.append(`lineItems[${index}].amount`, item.amount.toString());
+      formDataPayload.append(`lineItems[${index}].description`, item.description);
+      formDataPayload.append(`lineItems[${index}].amount`, item.amount.toString());
     });
-    formAction(formData);
+    formDataPayload.append('isMonthlyRecurring', data.isMonthlyRecurring ? 'true' : 'false');
+    formAction(formDataPayload);
   };
   
 
   return (
-    <Dialog open={isOpen} onOpenChange={onOpenChange}>
+    <Dialog open={isOpen} onOpenChange={
+        (open) => {
+            if(!open) { // If dialog is closing
+                 reset({ // Reset form to defaults when dialog closes
+                    userId: userId,
+                    vendor: '',
+                    date: new Date().toISOString().split('T')[0],
+                    total: 0,
+                    lineItems: [{ description: '', amount: 0 }],
+                    isMonthlyRecurring: false,
+                 });
+            }
+            onOpenChange(open);
+        }
+    }>
       <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>Add Manual Invoice</DialogTitle>
           <DialogDescription>
-            Enter the details for an invoice manually. Useful for recurring subscriptions or receipts.
+            Enter the details for an invoice manually. Mark if it's a recurring monthly expense.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit(processForm)}>
@@ -162,6 +161,7 @@ export function ManualInvoiceForm({ userId, onInvoiceAdded, isOpen, onOpenChange
                                 !field.value && "text-muted-foreground"
                             )}
                             >
+                             <CalendarIcon className="mr-2 h-4 w-4" />
                             {field.value ? format(new Date(field.value), "PPP") : <span>Pick a date</span>}
                             </Button>
                         </PopoverTrigger>
@@ -180,6 +180,25 @@ export function ManualInvoiceForm({ userId, onInvoiceAdded, isOpen, onOpenChange
                 {actionState?.errors?.date && <p className="text-sm text-destructive mt-1">{actionState.errors.date.join(', ')}</p>}
               </div>
               
+               <div className="flex items-center space-x-2">
+                <Controller
+                    name="isMonthlyRecurring"
+                    control={control}
+                    render={({ field }) => (
+                        <Checkbox
+                        id="isMonthlyRecurring"
+                        checked={field.value}
+                        onCheckedChange={field.onChange}
+                        />
+                    )}
+                />
+                <Label htmlFor="isMonthlyRecurring" className="text-sm font-normal cursor-pointer">
+                    This is a recurring monthly expense
+                </Label>
+                 {errors.isMonthlyRecurring && <p className="text-sm text-destructive mt-1">{errors.isMonthlyRecurring.message}</p>}
+              </div>
+
+
               <Card>
                 <CardHeader>
                     <CardTitle className="text-lg">Line Items</CardTitle>
@@ -258,7 +277,10 @@ export function ManualInvoiceForm({ userId, onInvoiceAdded, isOpen, onOpenChange
           </ScrollArea>
           <DialogFooter className="pt-6">
             <DialogClose asChild>
-                <Button type="button" variant="outline" onClick={() => { reset(); onOpenChange(false);}}>Cancel</Button>
+                <Button type="button" variant="outline" onClick={() => { 
+                    reset({ userId: userId, vendor: '', date: new Date().toISOString().split('T')[0], total: 0, lineItems: [{ description: '', amount: 0 }], isMonthlyRecurring: false }); 
+                    onOpenChange(false);
+                    }}>Cancel</Button>
             </DialogClose>
             <Button type="submit" disabled={isSubmitting || isPending}>
               {(isSubmitting || isPending) ? (
@@ -279,4 +301,3 @@ export function ManualInvoiceForm({ userId, onInvoiceAdded, isOpen, onOpenChange
     </Dialog>
   );
 }
-
