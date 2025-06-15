@@ -5,11 +5,12 @@ import { ObjectId } from 'mongodb';
 import { connectToDatabase } from '@/lib/mongodb';
 import { uploadFileToGCS } from '@/lib/gcs';
 import { extractInvoiceData, type ExtractInvoiceDataOutput } from '@/ai/flows/extract-invoice-data';
-import { summarizeInvoice, type SummarizeInvoiceOutput } from '@/ai/flows/summarize-invoice';
+import { summarizeInvoice, type SummarizeInvoiceInput, type SummarizeInvoiceOutput } from '@/ai/flows/summarize-invoice';
 import { categorizeInvoice, type CategorizeInvoiceInput, type CategorizeInvoiceOutput } from '@/ai/flows/categorize-invoice-flow';
 import { detectRecurrence, type DetectRecurrenceInput, type DetectRecurrenceOutput } from '@/ai/flows/detect-recurrence-flow';
 import { ai } from '@/ai/genkit';
 import type { Invoice, LineItem } from '@/types/invoice';
+import { z } from 'zod';
 
 // Helper to convert File object to data URI and Buffer
 interface FileConversionResult {
@@ -173,7 +174,7 @@ export async function handleInvoiceUpload(
       return { error: 'Failed to extract key data from invoice. The document might not be a valid invoice or is unreadable by the AI.' };
     }
 
-    const summaryInput = {
+    const summaryInput: SummarizeInvoiceInput = {
       vendor: extractedData.vendor,
       date: extractedData.date,
       total: extractedData.total,
@@ -305,6 +306,160 @@ export async function handleInvoiceUpload(
       errorMessage = `Failed to store invoice file in Cloud Storage: ${error.message.replace('GCS UploadError: ', '')}`;
     }
 
+    return { error: errorMessage };
+  }
+}
+
+export const ManualInvoiceEntrySchema = z.object({
+  userId: z.string().min(1, "User ID is required."),
+  vendor: z.string().min(1, "Vendor name is required."),
+  date: z.string().min(1, "Invoice date is required."), // Consider more specific date validation if needed
+  total: z.coerce.number().positive("Total must be a positive number."),
+  lineItems: z.array(z.object({
+    description: z.string().min(1, "Line item description is required."),
+    amount: z.coerce.number().positive("Line item amount must be a positive number."),
+  })).min(1, "At least one line item is required."),
+});
+
+export type ManualInvoiceEntryData = z.infer<typeof ManualInvoiceEntrySchema>;
+
+export interface ManualInvoiceFormState {
+    invoice?: Invoice;
+    error?: string;
+    message?: string;
+    errors?: Partial<Record<keyof ManualInvoiceEntryData | `lineItems.${number}.description` | `lineItems.${number}.amount`, string[]>>;
+}
+
+
+export async function handleManualInvoiceEntry(
+  prevState: ManualInvoiceFormState | undefined,
+  formData: FormData
+): Promise<ManualInvoiceFormState> {
+
+  const rawFormData = {
+    userId: formData.get('userId') as string,
+    vendor: formData.get('vendor') as string,
+    date: formData.get('invoiceDate') as string, // Note: form field name is invoiceDate
+    total: formData.get('total') as string, // Will be coerced by Zod
+    lineItems: [] as { description: string; amount: string }[],
+  };
+
+  let i = 0;
+  while (formData.has(`lineItems[${i}].description`)) {
+    rawFormData.lineItems.push({
+      description: formData.get(`lineItems[${i}].description`) as string,
+      amount: formData.get(`lineItems[${i}].amount`) as string, // Will be coerced
+    });
+    i++;
+  }
+  
+  const validatedFields = ManualInvoiceEntrySchema.safeParse({
+    userId: rawFormData.userId,
+    vendor: rawFormData.vendor,
+    date: rawFormData.date,
+    total: parseFloat(rawFormData.total), // Attempt to parse before Zod for better Zod error
+    lineItems: rawFormData.lineItems.map(li => ({
+        description: li.description,
+        amount: parseFloat(li.amount) // Attempt to parse
+    }))
+  });
+
+  if (!validatedFields.success) {
+    const fieldErrors: ManualInvoiceFormState['errors'] = {};
+    for (const issue of validatedFields.error.issues) {
+      const path = issue.path.join('.') as keyof ManualInvoiceFormState['errors'];
+      if (!fieldErrors[path]) {
+        fieldErrors[path] = [];
+      }
+      fieldErrors[path]!.push(issue.message);
+    }
+    return {
+      error: "Validation failed. Please check the fields.",
+      errors: fieldErrors,
+    };
+  }
+
+  const { userId, vendor, date, total, lineItems } = validatedFields.data;
+
+  try {
+    const summaryInput: SummarizeInvoiceInput = { vendor, date, total, lineItems };
+    const summarizedData = await summarizeInvoice(summaryInput);
+
+    let categories: string[] = ["Uncategorized"];
+    try {
+      const categorizationInput: CategorizeInvoiceInput = { vendor, lineItems };
+      const categorizationOutput = await categorizeInvoice(categorizationInput);
+      if (categorizationOutput?.categories?.length) {
+        categories = categorizationOutput.categories;
+      }
+    } catch (catError: any) {
+      console.warn('Failed to categorize manual invoice:', catError.message);
+    }
+
+    let recurrenceInfo: DetectRecurrenceOutput = { isLikelyRecurring: false };
+    try {
+      const recurrenceInput: DetectRecurrenceInput = { vendor, lineItems };
+      recurrenceInfo = await detectRecurrence(recurrenceInput);
+    } catch (recError: any) {
+      console.warn('Failed to detect recurrence for manual invoice:', recError.message);
+    }
+
+    let summaryEmbedding: number[] | undefined = undefined;
+    if (summarizedData.summary) {
+      try {
+        const embeddingResponse = await ai.embed({ content: summarizedData.summary });
+        if (embeddingResponse?.embedding?.length) {
+          summaryEmbedding = embeddingResponse.embedding;
+        } else {
+          console.warn('Failed to generate summary embedding for manual invoice.');
+        }
+      } catch (embeddingError: any) {
+        console.warn('Failed to generate summary embedding for manual invoice:', embeddingError.message);
+      }
+    }
+
+    const formattedDate = new Date(date).toISOString().split('T')[0];
+    const fileName = `Manual - ${vendor} - ${formattedDate}.json`; // Indicate it's a manual entry data file
+
+    const { db } = await connectToDatabase();
+    const invoiceDocumentForDb = {
+      userId: new ObjectId(userId),
+      fileName,
+      vendor,
+      date, // Store original date string for consistency, or format as ISO
+      total,
+      lineItems,
+      summary: summarizedData.summary,
+      summaryEmbedding,
+      categories,
+      isLikelyRecurring: recurrenceInfo.isLikelyRecurring,
+      recurrenceReasoning: recurrenceInfo.reasoning,
+      uploadedAt: new Date(),
+      gcsFileUri: undefined, // No file for manual entry
+      isDeleted: false,
+      deletedAt: null,
+    };
+
+    const insertResult = await db.collection(INVOICES_COLLECTION).insertOne(invoiceDocumentForDb);
+    if (!insertResult.insertedId) {
+      return { error: 'Failed to save manual invoice to the database.' };
+    }
+
+    const newInvoice: Invoice = mapDocumentToInvoice({
+        _id: insertResult.insertedId, 
+        ...invoiceDocumentForDb 
+    });
+
+    return {
+      invoice: newInvoice,
+      message: `Successfully added manual invoice for ${vendor}.`
+    };
+
+  } catch (error: any) {
+    console.error('Error processing manual invoice entry:', error);
+    let errorMessage = 'An unexpected error occurred while processing the manual invoice.';
+    if (error instanceof Error) errorMessage = error.message;
+    else if (typeof error === 'string') errorMessage = error;
     return { error: errorMessage };
   }
 }
@@ -660,3 +815,4 @@ export async function findSimilarInvoices(currentInvoiceId: string, userId: stri
     return { error: errorMessage };
   }
 }
+

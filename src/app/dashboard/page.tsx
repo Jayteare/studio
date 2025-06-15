@@ -5,11 +5,12 @@ import { useState, useEffect, useCallback, FormEvent } from 'react';
 import { useAuth } from '@/hooks/use-auth';
 import { useRouter } from 'next/navigation';
 import { InvoiceUploadForm } from '@/components/invoice-upload-form';
+import { ManualInvoiceForm } from '@/components/manual-invoice-form';
 import { InvoiceList } from '@/components/invoice-list';
 import type { Invoice } from '@/types/invoice';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Loader2, LogOut, Search, XCircle } from 'lucide-react';
+import { Loader2, LogOut, Search, XCircle, PlusCircle } from 'lucide-react';
 import { AppLogo } from '@/components/app-logo';
 import { Separator } from '@/components/ui/separator';
 import { fetchUserInvoices, softDeleteInvoice, searchInvoices, type FetchInvoicesResponse, type SoftDeleteResponse, type SearchInvoicesResponse } from './actions';
@@ -37,6 +38,8 @@ export default function DashboardPage() {
 
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [invoiceToDelete, setInvoiceToDelete] = useState<Invoice | null>(null);
+
+  const [isManualInvoiceFormOpen, setIsManualInvoiceFormOpen] = useState(false);
 
 
   useEffect(() => {
@@ -84,7 +87,7 @@ export default function DashboardPage() {
     if (!user?.id) return;
 
     setIsSearching(true);
-    setInvoicesLoading(true); // Use general loading state for simplicity or create a dedicated search loading
+    setInvoicesLoading(true); 
     const response: SearchInvoicesResponse = await searchInvoices(user.id, searchQuery);
     
     if (response.error) {
@@ -93,7 +96,7 @@ export default function DashboardPage() {
         description: response.error,
         variant: 'destructive',
       });
-      setInvoices([]); // Clear invoices or keep previous? For now, clear.
+      setInvoices([]); 
     } else if (response.invoices) {
       setInvoices(response.invoices);
       if (response.invoices.length === 0) {
@@ -113,21 +116,18 @@ export default function DashboardPage() {
     // useEffect will trigger loadInvoices
   };
 
-  const handleInvoiceUploaded = useCallback((newInvoice: Invoice) => {
+  const handleNewInvoiceAdded = useCallback((newInvoice: Invoice) => {
     // If currently searching, a new upload might not fit search criteria.
     // Simplest is to reload all or add to top if not searching.
     if (searchQuery) {
-        // Optionally, you could try to match newInvoice against searchQuery locally
-        // or just inform user their view might be filtered.
-        // For now, let's add to current view and user can re-search/clear.
-         setInvoices((prevInvoices) => [newInvoice, ...prevInvoices]);
+         setInvoices((prevInvoices) => [newInvoice, ...prevInvoices].sort((a,b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime()));
          toast({
-            title: 'Invoice Uploaded',
+            title: 'Invoice Added',
             description: `${newInvoice.fileName} is added. Your current view might be filtered by search. Clear search to see all.`,
             variant: 'default'
          })
     } else {
-        setInvoices((prevInvoices) => [newInvoice, ...prevInvoices]);
+        setInvoices((prevInvoices) => [newInvoice, ...prevInvoices].sort((a,b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime()));
     }
   }, [searchQuery, toast]);
 
@@ -163,7 +163,7 @@ export default function DashboardPage() {
   };
 
 
-  if (authIsLoading && !user) { // Show loading only if user is not yet available
+  if (authIsLoading && !user) { 
     return (
       <div className="flex min-h-screen flex-col items-center justify-center bg-background p-4">
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
@@ -202,12 +202,37 @@ export default function DashboardPage() {
         </header>
 
         <main className="flex-1 container mx-auto max-w-screen-2xl p-4 md:p-8">
-          <section className="mb-12">
+          <section className="mb-12 grid grid-cols-1 md:grid-cols-2 gap-8 items-start">
             <InvoiceUploadForm 
-              onInvoiceUploaded={handleInvoiceUploaded} 
+              onInvoiceUploaded={handleNewInvoiceAdded} 
               userId={user.id} 
             />
+            <Card className="w-full shadow-lg">
+                <CardHeader>
+                    <CardTitle className="font-headline flex items-center gap-2 text-2xl">
+                        <PlusCircle className="h-6 w-6 text-primary" />
+                        Manual Invoice Entry
+                    </CardTitle>
+                    <CardDescription>
+                        No file to upload? Enter invoice details manually, perfect for subscriptions or simple expenses.
+                    </CardDescription>
+                </CardHeader>
+                <CardContent>
+                    <Button onClick={() => setIsManualInvoiceFormOpen(true)} className="w-full">
+                        <PlusCircle className="mr-2 h-4 w-4" /> Add Manual Invoice
+                    </Button>
+                </CardContent>
+            </Card>
           </section>
+          
+          {isManualInvoiceFormOpen && user?.id && (
+            <ManualInvoiceForm
+                userId={user.id}
+                onInvoiceAdded={handleNewInvoiceAdded}
+                isOpen={isManualInvoiceFormOpen}
+                onOpenChange={setIsManualInvoiceFormOpen}
+            />
+          )}
           
           <Separator className="my-8" />
 
@@ -248,8 +273,8 @@ export default function DashboardPage() {
           </section>
         </main>
 
-        <footer className="py-6 md:px-8 md:py-0 border-t border-border/40">
-          <div className="container flex flex-col items-center justify-between gap-4 md:h-20 md:flex-row max-w-screen-2xl">
+        <footer className="py-6 md:px-8 md:py-0 border-t border-border/40 max-w-screen-2xl mx-auto w-full">
+          <div className="container flex flex-col items-center justify-between gap-4 md:h-20 md:flex-row">
             <p className="text-balance text-center text-sm leading-loose text-muted-foreground md:text-left">
               © {new Date().getFullYear()} Invoice Insights. Your smart invoice assistant.
             </p>
@@ -277,3 +302,4 @@ export default function DashboardPage() {
     </>
   );
 }
+

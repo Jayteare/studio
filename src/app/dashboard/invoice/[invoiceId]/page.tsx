@@ -91,7 +91,7 @@ export default function InvoiceDetailPage() {
       setSimilarInvoices(response.similarInvoices);
     }
     setIsLoadingSimilar(false);
-  }, [invoice, user?.id, toast]);
+  }, [invoice, user?.id]);
 
   useEffect(() => {
     if (invoice && user?.id) {
@@ -103,20 +103,41 @@ export default function InvoiceDetailPage() {
   const formatDate = (dateString?: string) => {
     if (!dateString) return 'N/A';
     try {
-      const date = new Date(dateString);
+      // Attempt to parse as ISO string or common date formats
+      let date = new Date(dateString);
+       // Check if the date is invalid (e.g. "Invalid Date" from new Date("some non-date string"))
       if (isNaN(date.getTime())) {
-        const parts = dateString.match(/(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})/);
+        // Try a more specific parse for "MM/DD/YYYY" or "MM-DD-YYYY" like formats
+        const parts = dateString.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
         if (parts) {
-            let year = parseInt(parts[3]);
-            if (year < 100) year += 2000;
-            return format(new Date(year, parseInt(parts[1]) - 1, parseInt(parts[2])), 'PPP');
+            let year = parseInt(parts[3], 10);
+            // Basic year correction for 2-digit years, assuming 2000s
+            if (year < 100) year += 2000; 
+            date = new Date(year, parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+        } else {
+            // If still invalid, return original string or a placeholder
+            console.warn(`Could not parse date string: ${dateString}`);
+            return dateString; 
         }
+      }
+      // Ensure the date is now valid before formatting
+      if (isNaN(date.getTime())) {
+        console.warn(`Final parsed date is invalid for: ${dateString}`);
         return dateString;
       }
-      return format(date, 'PPP p');
+      
+      // If it's a date string like 'YYYY-MM-DD', time might be midnight UTC.
+      // For display, local time zone interpretation of date is often better.
+      // new Date(year, monthIndex, day) creates date in local timezone.
+      if (dateString.match(/^\d{4}-\d{2}-\d{2}$/)) {
+        const [year, month, day] = dateString.split('-').map(Number);
+        return format(new Date(year, month - 1, day), 'PPP'); // Format as 'MMM d, yyyy'
+      }
+
+      return format(date, 'PPP p'); // Format as 'MMM d, yyyy, h:mm:ss AM/PM'
     } catch (error) {
-      console.warn(`Could not parse date: ${dateString}`);
-      return dateString;
+      console.warn(`Error formatting date: ${dateString}`, error);
+      return dateString; // Fallback to original string
     }
   };
 
@@ -191,7 +212,7 @@ export default function InvoiceDetailPage() {
                     <CardTitle className="font-headline text-3xl mb-1">{invoice.vendor || 'Invoice Details'}</CardTitle>
                     <CardDescription>Details for invoice: {invoice.fileName}</CardDescription>
                 </div>
-                {publicGcsUrl && (
+                {publicGcsUrl && invoice.gcsFileUri && ( // Only show if URI exists
                   <Button variant="outline" size="sm" asChild>
                     <Link href={publicGcsUrl} target="_blank" rel="noopener noreferrer">
                       <ExternalLink className="mr-2 h-4 w-4" />
@@ -238,6 +259,21 @@ export default function InvoiceDetailPage() {
                     </div>
                 </div>
             )}
+             {invoice.isLikelyRecurring !== undefined && (
+                <div className="space-y-2">
+                    <Label className="text-sm text-muted-foreground flex items-center gap-1">
+                        <Info className="h-4 w-4" /> AI Recurrence Check
+                    </Label>
+                    <p className={cn(
+                        "text-base p-3 rounded-md", 
+                        invoice.isLikelyRecurring ? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300" : "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300"
+                        )}>
+                        {invoice.isLikelyRecurring ? "Likely a recurring monthly expense." : "Not clearly a recurring monthly expense."}
+                        {invoice.recurrenceReasoning && <span className="block text-xs mt-1 opacity-80">Reasoning: {invoice.recurrenceReasoning}</span>}
+                    </p>
+                </div>
+            )}
+
 
             {invoice.lineItems && invoice.lineItems.length > 0 && (
               <div className="space-y-2">
@@ -343,9 +379,9 @@ export default function InvoiceDetailPage() {
 // Re-define Label component locally as it's not exported from ui/label if not using Form context
 // Or ensure it's exported from a shared location if used across multiple non-form pages.
 // For simplicity here, keeping it local if only used on this page.
-// If `cn` is not defined, ensure `import { cn } from '@/lib/utils';` is present.
 const Label: React.FC<React.HTMLAttributes<HTMLLabelElement>> = ({ className, children, ...props }) => (
   <label className={cn("block text-sm font-medium text-muted-foreground", className)} {...props}>
     {children}
   </label>
 );
+
