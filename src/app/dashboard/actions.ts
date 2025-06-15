@@ -10,7 +10,8 @@ import { categorizeInvoice, type CategorizeInvoiceInput, type CategorizeInvoiceO
 import { detectRecurrence, type DetectRecurrenceInput, type DetectRecurrenceOutput } from '@/ai/flows/detect-recurrence-flow';
 import { ai } from '@/ai/genkit';
 import type { Invoice, LineItem } from '@/types/invoice';
-import { z } from 'zod';
+import { ManualInvoiceEntrySchema, type ManualInvoiceEntryData } from '@/types/invoice-form';
+
 
 // Helper to convert File object to data URI and Buffer
 interface FileConversionResult {
@@ -310,18 +311,6 @@ export async function handleInvoiceUpload(
   }
 }
 
-export const ManualInvoiceEntrySchema = z.object({
-  userId: z.string().min(1, "User ID is required."),
-  vendor: z.string().min(1, "Vendor name is required."),
-  date: z.string().min(1, "Invoice date is required."), // Consider more specific date validation if needed
-  total: z.coerce.number().positive("Total must be a positive number."),
-  lineItems: z.array(z.object({
-    description: z.string().min(1, "Line item description is required."),
-    amount: z.coerce.number().positive("Line item amount must be a positive number."),
-  })).min(1, "At least one line item is required."),
-});
-
-export type ManualInvoiceEntryData = z.infer<typeof ManualInvoiceEntrySchema>;
 
 export interface ManualInvoiceFormState {
     invoice?: Invoice;
@@ -626,6 +615,7 @@ export interface SearchInvoicesResponse {
 }
 
 export async function searchInvoices(userId: string, searchText: string): Promise<SearchInvoicesResponse> {
+  console.error('Raw error object during searchInvoices:', "searchInvoices called"); 
   if (!userId) {
     return { error: 'User ID is required to search invoices.' };
   }

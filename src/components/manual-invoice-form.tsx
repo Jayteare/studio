@@ -4,8 +4,8 @@
 import { useEffect, useActionState } from 'react';
 import { useForm, useFieldArray, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { z } from 'zod';
-import { handleManualInvoiceEntry, type ManualInvoiceFormState, ManualInvoiceEntrySchema } from '@/app/dashboard/actions';
+import { handleManualInvoiceEntry, type ManualInvoiceFormState } from '@/app/dashboard/actions';
+import { ManualInvoiceEntrySchema, type ManualInvoiceEntryData } from '@/types/invoice-form';
 import type { Invoice } from '@/types/invoice';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -29,7 +29,7 @@ export interface ManualInvoiceFormProps {
   onOpenChange: (open: boolean) => void;
 }
 
-type FormData = z.infer<typeof ManualInvoiceEntrySchema>;
+type FormData = ManualInvoiceEntryData;
 
 function SubmitButton() {
   // react-hook-form's formState.isSubmitting can be used if not using useActionState directly with form
