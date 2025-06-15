@@ -10,6 +10,7 @@ import { InvoiceList } from '@/components/invoice-list';
 import type { Invoice } from '@/types/invoice';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Loader2, LogOut, Search, XCircle, PlusCircle } from 'lucide-react';
 import { AppLogo } from '@/components/app-logo';
 import { Separator } from '@/components/ui/separator';
@@ -302,4 +303,3 @@ export default function DashboardPage() {
     </>
   );
 }
-
