@@ -203,12 +203,12 @@ export default function DashboardPage() {
         </header>
 
         <main className="flex-1 container mx-auto max-w-screen-2xl p-4 md:p-8">
-          <section className="mb-12 grid grid-cols-1 md:grid-cols-2 gap-8 items-start">
+          <section className="mb-12 grid grid-cols-1 md:grid-cols-2 gap-8 items-stretch">
             <InvoiceUploadForm 
               onInvoiceUploaded={handleNewInvoiceAdded} 
               userId={user.id} 
             />
-            <Card className="w-full shadow-lg">
+            <Card className="w-full shadow-lg flex flex-col">
                 <CardHeader>
                     <CardTitle className="font-headline flex items-center gap-2 text-2xl">
                         <PlusCircle className="h-6 w-6 text-primary" />
@@ -218,8 +218,8 @@ export default function DashboardPage() {
                         No file to upload? Enter invoice details manually, perfect for subscriptions or simple expenses.
                     </CardDescription>
                 </CardHeader>
-                <CardContent>
-                    <Button onClick={() => setIsManualInvoiceFormOpen(true)} className="w-full">
+                <CardContent className="flex-grow flex items-center justify-center">
+                    <Button onClick={() => setIsManualInvoiceFormOpen(true)} className="w-full md:w-auto">
                         <PlusCircle className="mr-2 h-4 w-4" /> Add Manual Invoice
                     </Button>
                 </CardContent>
