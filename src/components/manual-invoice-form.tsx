@@ -151,8 +151,13 @@ export function ManualInvoiceForm({
   const lineItems = watch('lineItems');
 
   useEffect(() => {
-    const newTotal = lineItems.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
-    setValue('total', newTotal);
+    const newTotal = lineItems.reduce((sum, item) => {
+      const itemAmount = parseFloat(String(item.amount)); // Ensure amount is string then parse
+      return sum + (isNaN(itemAmount) ? 0 : itemAmount);
+    }, 0);
+    // Set total, ensuring it's a number, and explicitly prevent validation during this update.
+    // Using Number(newTotal.toFixed(2)) to handle potential floating point inaccuracies.
+    setValue('total', Number(newTotal.toFixed(2)), { shouldValidate: false, shouldDirty: true });
   }, [lineItems, setValue]);
 
 
@@ -188,11 +193,12 @@ export function ManualInvoiceForm({
   }, [mode, invoiceToEdit, reset, userId, isOpen]);
 
   useEffect(() => {
+    // Only process actionState if it's new and not while an action is pending
     if (isActionPending || !actionState || actionState === processedActionStateRef.current) {
       return;
     }
     
-    processedActionStateRef.current = actionState; // Mark as processed
+    processedActionStateRef.current = actionState; // Mark as processed for this specific state instance
 
     if (actionState.error) {
       toast({
@@ -209,7 +215,7 @@ export function ManualInvoiceForm({
       if (onFormSuccess) {
         onFormSuccess(actionState.invoice);
       }
-      onOpenChange(false);
+      onOpenChange(false); // Close dialog on success
     }
   }, [actionState, isActionPending, mode, onFormSuccess, onOpenChange, toast]);
 
@@ -247,7 +253,7 @@ export function ManualInvoiceForm({
   return (
     <Dialog open={isOpen} onOpenChange={
         (open) => {
-            if(!open && mode === 'create' && !actionState?.invoice) { 
+            if(!open && mode === 'create' && !actionState?.invoice && !isActionPending) { 
                  reset({
                     userId: userId,
                     invoiceId: undefined,
@@ -474,4 +480,5 @@ export function ManualInvoiceForm({
     
 
     
+
 
