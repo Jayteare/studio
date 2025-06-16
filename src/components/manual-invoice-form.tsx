@@ -2,7 +2,7 @@
 "use client";
 
 import React, { useEffect, useActionState } from 'react';
-import { useForm, useFieldArray, Controller } from 'react-hook-form';
+import { useForm, useFieldArray, Controller, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { ManualInvoiceEntrySchema, type ManualInvoiceEntryData } from '@/types/invoice-form';
 import type { Invoice } from '@/types/invoice';
@@ -60,6 +60,7 @@ export function ManualInvoiceForm({
     reset,
     formState: { errors, isSubmitting: isRHFSubmitting }, // isSubmitting from RHF
     setValue,
+    watch, // Add watch
   } = useForm<FormData>({
     resolver: zodResolver(ManualInvoiceEntrySchema),
     defaultValues: {
@@ -80,29 +81,45 @@ export function ManualInvoiceForm({
     name: 'lineItems',
   });
 
+  // Watch lineItems to auto-calculate total
+  const lineItems = watch('lineItems');
+
   useEffect(() => {
-    if (mode === 'edit' && invoiceToEdit) {
-      reset({
-        userId: userId,
-        invoiceId: invoiceToEdit.id,
-        vendor: invoiceToEdit.vendor,
-        date: invoiceToEdit.date ? format(parseISO(invoiceToEdit.date), 'yyyy-MM-dd') : new Date().toISOString().split('T')[0],
-        total: invoiceToEdit.total,
-        lineItems: invoiceToEdit.lineItems.map(li => ({ description: li.description, amount: li.amount })),
-        isMonthlyRecurring: invoiceToEdit.isLikelyRecurring || false,
-      });
-    } else if (mode === 'create') {
-      reset({
-        userId: userId,
-        invoiceId: undefined,
-        vendor: '',
-        date: new Date().toISOString().split('T')[0],
-        total: 0,
-        lineItems: [{ description: '', amount: 0 }],
-        isMonthlyRecurring: false,
-      });
+    const newTotal = lineItems.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+    setValue('total', newTotal, { shouldValidate: true });
+  }, [lineItems, setValue]);
+
+
+  useEffect(() => {
+    if (isOpen) { // Only reset/populate when dialog opens or mode/invoiceToEdit changes while open
+      if (mode === 'edit' && invoiceToEdit) {
+        const editDate = invoiceToEdit.date 
+            ? format(parseISO(invoiceToEdit.date), 'yyyy-MM-dd') 
+            : new Date().toISOString().split('T')[0];
+        reset({
+          userId: userId,
+          invoiceId: invoiceToEdit.id,
+          vendor: invoiceToEdit.vendor,
+          date: editDate,
+          total: invoiceToEdit.total, // Will be recalculated by useEffect if lineItems change
+          lineItems: invoiceToEdit.lineItems && invoiceToEdit.lineItems.length > 0 
+                     ? invoiceToEdit.lineItems.map(li => ({ description: li.description, amount: li.amount }))
+                     : [{ description: '', amount: 0 }],
+          isMonthlyRecurring: invoiceToEdit.isLikelyRecurring || false,
+        });
+      } else if (mode === 'create') {
+        reset({
+          userId: userId,
+          invoiceId: undefined,
+          vendor: '',
+          date: new Date().toISOString().split('T')[0],
+          total: 0,
+          lineItems: [{ description: '', amount: 0 }],
+          isMonthlyRecurring: false,
+        });
+      }
     }
-  }, [mode, invoiceToEdit, reset, userId]);
+  }, [mode, invoiceToEdit, reset, userId, isOpen]); // Add isOpen to dependency array
   
 
   const processForm = async (data: FormData) => {
@@ -120,32 +137,28 @@ export function ManualInvoiceForm({
     });
     formDataPayload.append('isMonthlyRecurring', data.isMonthlyRecurring ? 'true' : 'false');
     
-    // The parent's useActionState handles the actual call and state updates.
-    // This function is now more about preparing FormData and calling the action passed from parent.
-    const actionResult = await serverAction(formDataPayload);
-
-    if (actionResult?.error) {
-      toast({
-        title: mode === 'edit' ? 'Update Failed' : 'Save Failed',
-        description: actionResult.error,
-        variant: 'destructive',
+    React.startTransition(() => {
+      serverAction(formDataPayload).then(actionResult => {
+        if (actionResult?.error) {
+          toast({
+            title: mode === 'edit' ? 'Update Failed' : 'Save Failed',
+            description: actionResult.error,
+            variant: 'destructive',
+          });
+        }
+        if (actionResult?.invoice) {
+          toast({
+            title: mode === 'edit' ? 'Invoice Updated' : 'Invoice Saved',
+            description: actionResult.message || `${actionResult.invoice.vendor} details saved.`,
+            variant: 'default',
+          });
+          if (onFormSuccess) {
+            onFormSuccess(actionResult.invoice);
+          }
+          onOpenChange(false); 
+        }
       });
-      // If actionResult.errors (field specific), RHF might not show them automatically
-      // as this is not a direct RHF submit with useFormState.
-      // For now, relying on the general error toast.
-    }
-    if (actionResult?.invoice) {
-      toast({
-        title: mode === 'edit' ? 'Invoice Updated' : 'Invoice Saved',
-        description: actionResult.message || `${actionResult.invoice.vendor} details saved.`,
-        variant: 'default',
-      });
-      if (onFormSuccess) {
-        onFormSuccess(actionResult.invoice);
-      }
-      // Resetting form is handled by useEffect or parent closing dialog.
-      onOpenChange(false); 
-    }
+    });
   };
   
   const dialogTitle = mode === 'edit' ? 'Edit Invoice' : 'Add Manual Invoice';
@@ -162,7 +175,7 @@ export function ManualInvoiceForm({
     <Dialog open={isOpen} onOpenChange={
         (open) => {
             if(!open) { 
-                 // Reset logic handled by useEffect based on mode/invoiceToEdit
+                 // Reset logic now handled by useEffect with isOpen dependency
             }
             onOpenChange(open);
         }
@@ -302,7 +315,15 @@ export function ManualInvoiceForm({
 
               <div>
                 <Label htmlFor="total">Total Amount</Label>
-                <Input id="total" type="number" step="0.01" {...register('total', { valueAsNumber: true })} placeholder="0.00" className="font-semibold" />
+                <Input 
+                    id="total" 
+                    type="number" 
+                    step="0.01" 
+                    {...register('total', { valueAsNumber: true })} 
+                    placeholder="0.00" 
+                    className="font-semibold" 
+                    readOnly // Make total read-only
+                />
                 {errors.total && <p className="text-sm text-destructive mt-1">{errors.total.message}</p>}
               </div>
 
@@ -311,7 +332,6 @@ export function ManualInvoiceForm({
           <DialogFooter className="pt-6">
             <DialogClose asChild>
                 <Button type="button" variant="outline" onClick={() => { 
-                    // Reset is handled by useEffect when isOpen changes or by parent logic.
                     onOpenChange(false);
                     }}>Cancel</Button>
             </DialogClose>
@@ -334,3 +354,4 @@ export function ManualInvoiceForm({
     </Dialog>
   );
 }
+
