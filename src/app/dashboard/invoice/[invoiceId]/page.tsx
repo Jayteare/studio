@@ -296,21 +296,24 @@ export default function InvoiceDetailPage() {
               </p>
             </div>
 
-            {invoice.categories && invoice.categories.length > 0 && (
-                <div className="space-y-2">
-                    <Label className="text-sm text-muted-foreground flex items-center gap-1"><Tag className="h-4 w-4" /> AI Suggested Categories</Label>
+            <div className="space-y-2">
+                <Label className="text-sm text-muted-foreground flex items-center gap-1"><Tag className="h-4 w-4" /> Categories</Label>
+                {invoice.categories && invoice.categories.length > 0 ? (
                     <div className="flex flex-wrap gap-2">
                         {invoice.categories.map((category, index) => (
                             <Badge key={index} variant="secondary">{category}</Badge>
                         ))}
                     </div>
-                </div>
-            )}
+                ) : (
+                    <p className="text-sm text-muted-foreground italic">No categories assigned.</p>
+                )}
+            </div>
+            
              {invoice.isLikelyRecurring !== undefined && (
                 <div className="space-y-2">
                     <div className="flex justify-between items-center">
                         <Label className="text-sm text-muted-foreground flex items-center gap-1">
-                            <Info className="h-4 w-4" /> AI Recurrence Check
+                            <Info className="h-4 w-4" /> Recurrence Status
                         </Label>
                         <Button 
                             variant="outline" 
@@ -326,7 +329,7 @@ export default function InvoiceDetailPage() {
                         "text-base p-3 rounded-md", 
                         invoice.isLikelyRecurring ? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300" : "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300"
                         )}>
-                        {invoice.isLikelyRecurring ? "Likely a recurring monthly expense." : "Not clearly a recurring monthly expense."}
+                        {invoice.isLikelyRecurring ? "Currently marked as a recurring monthly expense." : "Currently marked as NOT a recurring monthly expense."}
                         {invoice.recurrenceReasoning && <span className="block text-xs mt-1 opacity-80">Reasoning: {invoice.recurrenceReasoning}</span>}
                     </p>
                 </div>
@@ -460,3 +463,4 @@ const Label: React.FC<React.HTMLAttributes<HTMLLabelElement>> = ({ className, ch
     {children}
   </label>
 );
+
