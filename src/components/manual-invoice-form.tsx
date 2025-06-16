@@ -14,7 +14,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter, DialogClose } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Loader2, PlusCircle, Save, Trash2, CalendarIcon } from 'lucide-react';
+import { Loader2, PlusCircle, Save, Trash2, CalendarIcon, DollarSign } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Calendar } from '@/components/ui/calendar';
@@ -89,8 +89,8 @@ export function ManualInvoiceForm({ userId, onInvoiceAdded, isOpen, onOpenChange
     }
   }, [actionState, toast, onInvoiceAdded, reset, onOpenChange, userId]);
 
-  const processForm = (data: FormData) => { // data from react-hook-form's handleSubmit
-    const formDataPayload = new FormData(); // Browser FormData for server action
+  const processForm = (data: FormData) => { 
+    const formDataPayload = new FormData(); 
     formDataPayload.append('userId', data.userId);
     formDataPayload.append('vendor', data.vendor);
     formDataPayload.append('invoiceDate', data.date); 
@@ -216,15 +216,16 @@ export function ManualInvoiceForm({ userId, onInvoiceAdded, isOpen, onOpenChange
                             <p className="text-xs text-destructive">{actionState.errors[`lineItems.${index}.description` as const]!.join(', ')}</p>
                         )}
                         </div>
-                        <div className="w-1/4 space-y-1">
-                        <Label htmlFor={`lineItems[${index}].amount`} className="sr-only">Amount</Label>
-                        <Input
-                            type="number"
-                            step="0.01"
-                            {...register(`lineItems.${index}.amount`, { valueAsNumber: true })}
-                            placeholder="Amount"
-                            className="text-sm"
-                        />
+                        <div className="w-1/3 space-y-1 relative flex items-center">
+                            <Label htmlFor={`lineItems[${index}].amount`} className="sr-only">Amount</Label>
+                            <DollarSign className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+                            <Input
+                                type="number"
+                                step="0.01"
+                                {...register(`lineItems.${index}.amount`, { valueAsNumber: true })}
+                                placeholder="Amount"
+                                className="text-sm pl-7" // Added pl-7 for padding
+                            />
                         {errors.lineItems?.[index]?.amount && (
                             <p className="text-xs text-destructive">{errors.lineItems[index]?.amount?.message}</p>
                         )}
@@ -297,4 +298,3 @@ export function ManualInvoiceForm({ userId, onInvoiceAdded, isOpen, onOpenChange
     </Dialog>
   );
 }
-
