@@ -316,7 +316,7 @@ export interface ManualInvoiceFormState {
     invoice?: Invoice;
     error?: string;
     message?: string;
-    errors?: Partial<Record<keyof ManualInvoiceEntryData | `lineItems.${number}.description` | `lineItems.${number}.amount` | 'isMonthlyRecurring', string[]>>;
+    errors?: Partial<Record<keyof ManualInvoiceEntryData | `lineItems.${number}.description` | `lineItems.${number}.amount` | 'isMonthlyRecurring' | 'categoriesString', string[]>>;
 }
 
 
@@ -332,6 +332,7 @@ export async function handleManualInvoiceEntry(
     total: formData.get('total') as string,
     lineItems: [] as { description: string; amount: string }[],
     isMonthlyRecurring: formData.get('isMonthlyRecurring') === 'true',
+    categoriesString: formData.get('categoriesString') as string | null,
   };
 
   let i = 0;
@@ -353,6 +354,7 @@ export async function handleManualInvoiceEntry(
         amount: parseFloat(li.amount) 
     })),
     isMonthlyRecurring: rawFormData.isMonthlyRecurring,
+    categoriesString: rawFormData.categoriesString || '',
   });
 
   if (!validatedFields.success) {
@@ -370,22 +372,31 @@ export async function handleManualInvoiceEntry(
     };
   }
 
-  const { userId, vendor, date, total, lineItems, isMonthlyRecurring } = validatedFields.data;
+  const { userId, vendor, date, total, lineItems, isMonthlyRecurring, categoriesString } = validatedFields.data;
+  let finalCategories: string[] = [];
 
-  try {
-    const summaryInput: SummarizeInvoiceInput = { vendor, date, total, lineItems };
-    const summarizedData = await summarizeInvoice(summaryInput);
-
-    let categories: string[] = ["Uncategorized"];
+  if (categoriesString && categoriesString.trim() !== '') {
+    finalCategories = categoriesString.split(',').map(s => s.trim()).filter(s => s !== '');
+  } else {
+    // Call AI for categories if user didn't provide any
     try {
       const categorizationInput: CategorizeInvoiceInput = { vendor, lineItems };
       const categorizationOutput = await categorizeInvoice(categorizationInput);
       if (categorizationOutput?.categories?.length) {
-        categories = categorizationOutput.categories;
+        finalCategories = categorizationOutput.categories;
+      } else {
+        finalCategories = ["Uncategorized"];
       }
     } catch (catError: any) {
       console.warn('Failed to categorize manual invoice:', catError.message);
+      finalCategories = ["Uncategorized"]; // Fallback
     }
+  }
+
+
+  try {
+    const summaryInput: SummarizeInvoiceInput = { vendor, date, total, lineItems };
+    const summarizedData = await summarizeInvoice(summaryInput);
 
     let recurrenceInfo: DetectRecurrenceOutput = { isLikelyRecurring: false };
     if (isMonthlyRecurring) {
@@ -430,7 +441,7 @@ export async function handleManualInvoiceEntry(
       lineItems,
       summary: summarizedData.summary,
       summaryEmbedding,
-      categories,
+      categories: finalCategories,
       isLikelyRecurring: recurrenceInfo.isLikelyRecurring,
       recurrenceReasoning: recurrenceInfo.reasoning,
       uploadedAt: new Date(),
@@ -467,7 +478,7 @@ export interface UpdateInvoiceFormState {
     invoice?: Invoice;
     error?: string;
     message?: string;
-    errors?: Partial<Record<keyof ManualInvoiceEntryData | `lineItems.${number}.description` | `lineItems.${number}.amount` | 'isMonthlyRecurring', string[]>>;
+    errors?: Partial<Record<keyof ManualInvoiceEntryData | `lineItems.${number}.description` | `lineItems.${number}.amount` | 'isMonthlyRecurring' | 'categoriesString', string[]>>;
 }
 
 export async function handleUpdateInvoice(
@@ -477,12 +488,13 @@ export async function handleUpdateInvoice(
 ): Promise<UpdateInvoiceFormState> {
   const rawFormData = {
     userId: formData.get('userId') as string,
-    invoiceId: formData.get('invoiceId') as string, // Will be the same as invoiceIdToUpdate
+    invoiceId: formData.get('invoiceId') as string, 
     vendor: formData.get('vendor') as string,
     date: formData.get('invoiceDate') as string,
     total: formData.get('total') as string,
     lineItems: [] as { description: string; amount: string }[],
     isMonthlyRecurring: formData.get('isMonthlyRecurring') === 'true',
+    categoriesString: formData.get('categoriesString') as string | null, // Get categories string
   };
 
   if (invoiceIdToUpdate !== rawFormData.invoiceId) {
@@ -509,6 +521,7 @@ export async function handleUpdateInvoice(
       amount: parseFloat(li.amount),
     })),
     isMonthlyRecurring: rawFormData.isMonthlyRecurring,
+    categoriesString: rawFormData.categoriesString || '', // Pass to schema
   });
 
   if (!validatedFields.success) {
@@ -521,7 +534,7 @@ export async function handleUpdateInvoice(
     return { error: "Validation failed. Please check the fields.", errors: fieldErrors };
   }
 
-  const { userId, vendor, date, total, lineItems, isMonthlyRecurring } = validatedFields.data;
+  const { userId, vendor, date, total, lineItems, isMonthlyRecurring, categoriesString } = validatedFields.data;
 
   try {
     const { db } = await connectToDatabase();
@@ -533,21 +546,16 @@ export async function handleUpdateInvoice(
       return { error: "Invoice not found or user not authorized to update." };
     }
 
-    // AI Re-processing
+    // AI Re-processing for summary and recurrence
     const summaryInput: SummarizeInvoiceInput = { vendor, date, total, lineItems };
     const summarizedData = await summarizeInvoice(summaryInput);
 
-    let categories: string[] = ["Uncategorized"];
-    try {
-      const categorizationInput: CategorizeInvoiceInput = { vendor, lineItems };
-      const categorizationOutput = await categorizeInvoice(categorizationInput);
-      if (categorizationOutput?.categories?.length) {
-        categories = categorizationOutput.categories;
-      }
-    } catch (catError: any) {
-      console.warn('Failed to re-categorize edited invoice:', catError.message);
-      categories = existingInvoice.categories || ["Uncategorized"]; // Fallback
-    }
+    // Categories - User's input is authoritative. No AI for categories on edit.
+    const updatedCategories = (categoriesString || '')
+        .split(',')
+        .map(s => s.trim())
+        .filter(s => s.length > 0);
+    // If categoriesString is empty or only commas, updatedCategories will be an empty array.
 
     let recurrenceInfo: DetectRecurrenceOutput = { isLikelyRecurring: false };
     if (isMonthlyRecurring) {
@@ -585,12 +593,11 @@ export async function handleUpdateInvoice(
       total,
       lineItems,
       summary: summarizedData.summary,
-      summaryEmbedding: summaryEmbedding || null, // Ensure null if undefined
-      categories,
+      summaryEmbedding: summaryEmbedding || null, 
+      categories: updatedCategories, // Use parsed user input
       isLikelyRecurring: recurrenceInfo.isLikelyRecurring,
       recurrenceReasoning: recurrenceInfo.reasoning,
-      fileName, // Keep original filename for uploaded files, or update for manual
-      // uploadedAt is not changed on edit, gcsFileUri is not changed
+      fileName, 
     };
 
     const updateResult = await db.collection(INVOICES_COLLECTION).updateOne(
@@ -602,8 +609,6 @@ export async function handleUpdateInvoice(
       return { error: 'Invoice not found or user not authorized to update.' };
     }
     if (updateResult.modifiedCount === 0 && updateResult.matchedCount === 1) {
-      // This means the data submitted was identical to what's in the DB
-      // We can still return success as if it was updated
        const unchangedInvoice = mapDocumentToInvoice({ ...existingInvoice, ...updateData });
        return { invoice: unchangedInvoice, message: 'Invoice details are already up to date.' };
     }
@@ -703,11 +708,9 @@ export async function softDeleteInvoice(invoiceId: string, userId: string): Prom
       return { error: 'Invoice not found or user not authorized to delete.' };
     }
     if (result.modifiedCount === 0) {
-      // This could mean it was already deleted, or no change was made.
-      // For simplicity, let's check if it's already deleted.
       const currentDoc = await db.collection(INVOICES_COLLECTION).findOne({ _id: invoiceObjectId, userId: userObjectId});
       if (currentDoc && currentDoc.isDeleted) {
-        return { success: true, deletedInvoiceId: invoiceId }; // Treat as success if already deleted by this user.
+        return { success: true, deletedInvoiceId: invoiceId }; 
       }
       return { error: 'Invoice was not modified. It might already be deleted or data was identical.' };
     }
@@ -1108,10 +1111,9 @@ export async function toggleInvoiceRecurrence(invoiceId: string, userId: string)
             return { error: 'Invoice not found or user not authorized.' };
         }
         if (updateResult.modifiedCount === 0) {
-             // Check if the data was already in the target state
             if (currentInvoiceDoc.isLikelyRecurring === newIsLikelyRecurring && currentInvoiceDoc.recurrenceReasoning === newReasoning) {
                 const updatedInvoice = mapDocumentToInvoice({ ...currentInvoiceDoc, isLikelyRecurring: newIsLikelyRecurring, recurrenceReasoning: newReasoning });
-                return { invoice: updatedInvoice }; // No actual change, but return success
+                return { invoice: updatedInvoice }; 
             }
             return { error: 'Invoice recurrence status was not changed.' };
         }
