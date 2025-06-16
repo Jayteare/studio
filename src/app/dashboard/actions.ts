@@ -1,3 +1,4 @@
+
 'use server';
 
 import { ObjectId } from 'mongodb';
@@ -557,7 +558,7 @@ export async function handleManualInvoiceEntry(
       }
     }
     
-    const fileName = `Manual - ${vendor} - ${dbDate}.json`; 
+    const fileName = `Manual - ${vendor} - ${dbDate}`; 
     
     const { db } = await connectToDatabase();
     const invoiceDocumentForDb = {
@@ -712,7 +713,7 @@ export async function handleUpdateInvoice(
         ? "User marked as monthly recurring." 
         : `User marked as not monthly recurring on ${formatDateFn(new Date(), 'yyyy-MM-dd')}.`; 
     
-    const fileName = existingInvoice.gcsFileUri ? existingInvoice.fileName : `Manual - ${vendor} - ${dbDate}.json`; 
+    const fileName = existingInvoice.gcsFileUri ? existingInvoice.fileName : `Manual - ${vendor} - ${dbDate}`; 
 
     const updateFields: Partial<Invoice> & { vendor: string; date: string; total: number; lineItems: LineItem[]; categories: string[]; isLikelyRecurring: boolean; recurrenceReasoning: string; fileName: string; } = {
       vendor,
@@ -1376,3 +1377,6 @@ export async function fetchSpendingAnalytics(userId: string): Promise<FetchSpend
     return { error: 'An unexpected error occurred while fetching spending analytics. Please try again.' };
   }
 }
+
+
+    
