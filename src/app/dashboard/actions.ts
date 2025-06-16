@@ -1,4 +1,3 @@
-
 'use server';
 
 import { ObjectId } from 'mongodb';
@@ -405,7 +404,7 @@ export async function handleInvoiceUpload(
 
     if (error?.name === 'BSONError' || (error?.message && String(error.message).includes('input must be a 24 character hex string'))) {
       userFriendlyMessage = 'There was an issue validating your user session. Please try logging out and logging back in.';
-    } else if (error?.message && (String(error.message).includes('Deadline exceeded') || String(error.message).includes('unavailable') || (error?.code && (error.code === 'UNAVAILABLE' || error.code === 503 || error.code === 14)))) {
+    } else if (error?.message && (String(error.message).includes('Deadline exceeded') || String(error.message).includes('unavailable') || String(error.message).includes('UNAVAILABLE') || (error?.code && (error.code === 'UNAVAILABLE' || error.code === 503 || error.code === 14)))) {
       userFriendlyMessage = 'The AI service is currently experiencing high load or is temporarily unavailable. Please try again in a few minutes.';
     } else if (error?.message && (String(error.message).includes('Invalid media type') || String(error.message).includes('Unsupported input content type'))) {
       userFriendlyMessage = "The AI service could not process the file's format. Please ensure it's a clear PDF, JPG, PNG, or WEBP image.";
@@ -1281,3 +1280,99 @@ export async function fetchInvoicesByMonth(userId: string, year: number, month: 
   }
 }
 
+
+// Types for Advanced Spending Analytics
+export interface MonthlySpendingData {
+  month: string; // YYYY-MM format
+  totalSpent: number;
+}
+
+export interface OverallSpendingMetrics {
+  totalOverallSpending: number;
+  averageMonthlySpending: number;
+  numberOfActiveMonths: number;
+  firstMonthActive?: string; // YYYY-MM
+  lastMonthActive?: string; // YYYY-MM
+}
+
+export interface FetchSpendingAnalyticsResponse {
+  monthlyBreakdown?: MonthlySpendingData[];
+  overallMetrics?: OverallSpendingMetrics;
+  error?: string;
+}
+
+export async function fetchSpendingAnalytics(userId: string): Promise<FetchSpendingAnalyticsResponse> {
+  if (!userId) return { error: 'User ID is required.' };
+  let userObjectId: ObjectId;
+  try {
+    userObjectId = new ObjectId(userId);
+  } catch (e: any) {
+    console.error('--- DETAILED ERROR: Invalid User ID for BSON ObjectId in fetchSpendingAnalytics ---');
+    console.error('Timestamp:', new Date().toISOString());
+    console.error('Provided userIdString:', userId);
+    console.error('Raw error object:', e);
+    console.error('--- END OF DETAILED ERROR ---');
+    return { error: 'Invalid User ID format for spending analytics.' };
+  }
+
+  try {
+    const { db } = await connectToDatabase();
+    const monthlyBreakdownPipeline = [
+      { $match: { userId: userObjectId, isDeleted: { $ne: true } } },
+      { $addFields: { yearMonth: { $substrCP: ["$date", 0, 7] } } }, // Extracts YYYY-MM
+      { $group: { _id: "$yearMonth", totalSpent: { $sum: "$total" } } },
+      { $sort: { _id: 1 } }, // Sort by month YYYY-MM ascending
+      { $project: { _id: 0, month: "$_id", totalSpent: 1 } }
+    ];
+
+    const monthlyBreakdownResult = await db.collection(INVOICES_COLLECTION).aggregate(monthlyBreakdownPipeline).toArray();
+    const monthlyBreakdown: MonthlySpendingData[] = monthlyBreakdownResult.map(item => ({
+      month: item.month as string,
+      totalSpent: item.totalSpent as number,
+    }));
+
+    if (monthlyBreakdown.length === 0) {
+      return { 
+        monthlyBreakdown: [], 
+        overallMetrics: { 
+          totalOverallSpending: 0, 
+          averageMonthlySpending: 0, 
+          numberOfActiveMonths: 0 
+        } 
+      };
+    }
+
+    let totalOverallSpending = 0;
+    monthlyBreakdown.forEach(item => {
+      totalOverallSpending += item.totalSpent;
+    });
+
+    const numberOfActiveMonths = monthlyBreakdown.length;
+    const averageMonthlySpending = numberOfActiveMonths > 0 ? totalOverallSpending / numberOfActiveMonths : 0;
+    
+    const firstMonthActive = monthlyBreakdown[0]?.month;
+    const lastMonthActive = monthlyBreakdown[monthlyBreakdown.length - 1]?.month;
+
+    const overallMetrics: OverallSpendingMetrics = {
+      totalOverallSpending,
+      averageMonthlySpending,
+      numberOfActiveMonths,
+      firstMonthActive,
+      lastMonthActive,
+    };
+
+    return { monthlyBreakdown, overallMetrics };
+
+  } catch (error: any) {
+    console.error('--- DETAILED ERROR: Fetching spending analytics ---');
+    console.error('Timestamp:', new Date().toISOString());
+    console.error('User ID:', userId);
+    console.error('Raw error object:', error);
+    if (error && typeof error === 'object') {
+      console.error('Error Type/Name:', error.name || (error.constructor && error.constructor.name) || 'N/A');
+      console.error('Error Message:', String(error.message) || 'N/A');
+    }
+    console.error('--- END OF DETAILED ERROR ---');
+    return { error: 'An unexpected error occurred while fetching spending analytics. Please try again.' };
+  }
+}
