@@ -890,3 +890,77 @@ export async function fetchSpendingDistribution(userId: string): Promise<FetchSp
     return { error: errorMessage };
   }
 }
+
+
+export interface ToggleRecurrenceResponse {
+    invoice?: Invoice;
+    error?: string;
+}
+
+export async function toggleInvoiceRecurrence(invoiceId: string, userId: string): Promise<ToggleRecurrenceResponse> {
+    if (!userId) {
+        return { error: 'User ID is required.' };
+    }
+    if (!invoiceId) {
+        return { error: 'Invoice ID is required.' };
+    }
+
+    let userObjectId: ObjectId;
+    let currentInvoiceObjectId: ObjectId;
+
+    try {
+        userObjectId = new ObjectId(userId);
+        currentInvoiceObjectId = new ObjectId(invoiceId);
+    } catch (e) {
+        return { error: 'Invalid Invoice ID or User ID format.' };
+    }
+
+    try {
+        const { db } = await connectToDatabase();
+        const currentInvoiceDoc = await db.collection(INVOICES_COLLECTION).findOne({
+            _id: currentInvoiceObjectId,
+            userId: userObjectId,
+            isDeleted: { $ne: true },
+        });
+
+        if (!currentInvoiceDoc) {
+            return { error: 'Invoice not found or you do not have permission to modify it.' };
+        }
+
+        const currentIsLikelyRecurring = currentInvoiceDoc.isLikelyRecurring || false;
+        const newIsLikelyRecurring = !currentIsLikelyRecurring;
+        const newReasoning = `Manually set to ${newIsLikelyRecurring ? 'monthly recurring' : 'not monthly recurring'} by user on ${new Date().toLocaleDateString()}.`;
+
+        const updateResult = await db.collection(INVOICES_COLLECTION).updateOne(
+            { _id: currentInvoiceObjectId, userId: userObjectId },
+            {
+                $set: {
+                    isLikelyRecurring: newIsLikelyRecurring,
+                    recurrenceReasoning: newReasoning,
+                },
+            }
+        );
+
+        if (updateResult.matchedCount === 0) {
+            return { error: 'Invoice not found or user not authorized.' };
+        }
+        if (updateResult.modifiedCount === 0) {
+            return { error: 'Invoice recurrence status was not changed. It might already be in the desired state.' };
+        }
+        
+        const updatedDoc = await db.collection(INVOICES_COLLECTION).findOne({ _id: currentInvoiceObjectId });
+        if (!updatedDoc) {
+             return { error: 'Failed to retrieve updated invoice details.' };
+        }
+        const updatedInvoice = mapDocumentToInvoice(updatedDoc);
+        return { invoice: updatedInvoice };
+
+    } catch (error: any) {
+        console.error('Error toggling invoice recurrence:', error);
+        let errorMessage = 'An unexpected error occurred while updating recurrence status.';
+        if (error instanceof Error) {
+            errorMessage = `Failed to update recurrence: ${error.message}`;
+        }
+        return { error: errorMessage };
+    }
+}

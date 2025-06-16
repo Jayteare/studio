@@ -4,13 +4,13 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useAuth } from '@/hooks/use-auth';
-import { fetchInvoiceById, type FetchInvoiceByIdResponse, findSimilarInvoices, type FindSimilarInvoicesResponse } from '@/app/dashboard/actions';
+import { fetchInvoiceById, type FetchInvoiceByIdResponse, findSimilarInvoices, type FindSimilarInvoicesResponse, toggleInvoiceRecurrence, type ToggleRecurrenceResponse } from '@/app/dashboard/actions';
 import type { Invoice, LineItem } from '@/types/invoice';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, ArrowLeft, FileText, CalendarDays, CircleDollarSign, Info, AlertTriangle, ExternalLink, Copy, Tag } from 'lucide-react';
+import { Loader2, ArrowLeft, FileText, CalendarDays, CircleDollarSign, Info, AlertTriangle, ExternalLink, Copy, Tag, Repeat, XCircle } from 'lucide-react';
 import { format } from 'date-fns';
 import Link from 'next/link';
 import { AppLogo } from '@/components/app-logo';
@@ -30,6 +30,7 @@ export default function InvoiceDetailPage() {
   const [similarInvoices, setSimilarInvoices] = useState<Invoice[]>([]);
   const [isLoadingSimilar, setIsLoadingSimilar] = useState(false);
   const [errorSimilar, setErrorSimilar] = useState<string | null>(null);
+  const [isTogglingRecurrence, setIsTogglingRecurrence] = useState(false);
 
   const invoiceId = Array.isArray(params.invoiceId) ? params.invoiceId[0] : params.invoiceId;
 
@@ -95,13 +96,36 @@ export default function InvoiceDetailPage() {
       setSimilarInvoices(response.similarInvoices);
     }
     setIsLoadingSimilar(false);
-  }, [invoice, user?.id, toast]); // Added toast to dependencies if used
+  }, [invoice, user?.id, toast]); 
 
   useEffect(() => {
     if (invoice && user?.id) {
       loadSimilarInvoices();
     }
   }, [invoice, user?.id, loadSimilarInvoices]);
+
+  const handleToggleRecurrence = async () => {
+    if (!invoice || !user?.id) return;
+
+    setIsTogglingRecurrence(true);
+    const response: ToggleRecurrenceResponse = await toggleInvoiceRecurrence(invoice.id, user.id);
+    setIsTogglingRecurrence(false);
+
+    if (response.error) {
+        toast({
+            title: 'Update Failed',
+            description: response.error,
+            variant: 'destructive',
+        });
+    } else if (response.invoice) {
+        setInvoice(response.invoice); // Update the local state with the modified invoice
+        toast({
+            title: 'Recurrence Status Updated',
+            description: `Invoice marked as ${response.invoice.isLikelyRecurring ? 'monthly recurring' : 'not monthly recurring'}.`,
+            variant: 'default',
+        });
+    }
+  };
 
 
   const formatDate = (dateString?: string) => {
@@ -124,15 +148,16 @@ export default function InvoiceDetailPage() {
         return dateString;
       }
       
+      // Handle YYYY-MM-DD strings which might be parsed as UTC by new Date() leading to off-by-one day
       if (dateString.match(/^\d{4}-\d{2}-\d{2}$/)) {
         const [year, month, day] = dateString.split('-').map(Number);
-        return format(new Date(year, month - 1, day), 'PPP');
+        return format(new Date(year, month - 1, day), 'PPP'); // Specify local timezone interpretation
       }
 
-      return format(date, 'PPP p'); 
+      return format(date, 'PPP p'); // For full datetime strings, PPP p is fine
     } catch (error) {
       console.warn(`Error formatting date: ${dateString}`, error);
-      return dateString; 
+      return dateString; // Fallback to original string if formatting fails
     }
   };
 
@@ -256,9 +281,20 @@ export default function InvoiceDetailPage() {
             )}
              {invoice.isLikelyRecurring !== undefined && (
                 <div className="space-y-2">
-                    <Label className="text-sm text-muted-foreground flex items-center gap-1">
-                        <Info className="h-4 w-4" /> AI Recurrence Check
-                    </Label>
+                    <div className="flex justify-between items-center">
+                        <Label className="text-sm text-muted-foreground flex items-center gap-1">
+                            <Info className="h-4 w-4" /> AI Recurrence Check
+                        </Label>
+                        <Button 
+                            variant="outline" 
+                            size="sm" 
+                            onClick={handleToggleRecurrence}
+                            disabled={isTogglingRecurrence}
+                        >
+                            {isTogglingRecurrence ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : (invoice.isLikelyRecurring ? <XCircle className="mr-2 h-4 w-4" /> : <Repeat className="mr-2 h-4 w-4" />)}
+                            {invoice.isLikelyRecurring ? "Mark as NOT Monthly Recurring" : "Mark as Monthly Recurring"}
+                        </Button>
+                    </div>
                     <p className={cn(
                         "text-base p-3 rounded-md", 
                         invoice.isLikelyRecurring ? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300" : "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300"
