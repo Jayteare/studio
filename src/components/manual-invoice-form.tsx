@@ -1,7 +1,7 @@
 
 "use client";
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { useForm, useFieldArray, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { ManualInvoiceEntrySchema, type ManualInvoiceEntryData } from '@/types/invoice-form';
@@ -115,6 +115,7 @@ export function ManualInvoiceForm({
     onFormSuccess
 }: ManualInvoiceFormProps) {
   const { toast } = useToast();
+  const processedActionStateRef = useRef<ManualInvoiceFormActionState | undefined>(undefined);
 
   const {
     control,
@@ -157,6 +158,7 @@ export function ManualInvoiceForm({
 
   useEffect(() => {
     if (isOpen) {
+      processedActionStateRef.current = undefined; // Reset when dialog opens
       if (mode === 'edit' && invoiceToEdit) {
         reset({
           userId: userId,
@@ -186,9 +188,11 @@ export function ManualInvoiceForm({
   }, [mode, invoiceToEdit, reset, userId, isOpen]);
 
   useEffect(() => {
-    if (isActionPending || !actionState) {
+    if (isActionPending || !actionState || actionState === processedActionStateRef.current) {
       return;
     }
+    
+    processedActionStateRef.current = actionState; // Mark as processed
 
     if (actionState.error) {
       toast({
@@ -207,7 +211,7 @@ export function ManualInvoiceForm({
       }
       onOpenChange(false);
     }
-  }, [actionState, isActionPending, mode, onFormSuccess, onOpenChange, toast, reset, userId]);
+  }, [actionState, isActionPending, mode, onFormSuccess, onOpenChange, toast]);
 
 
   const processForm = (data: ManualInvoiceEntryData) => {
@@ -470,3 +474,4 @@ export function ManualInvoiceForm({
     
 
     
+
