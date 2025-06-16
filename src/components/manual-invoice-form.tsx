@@ -47,7 +47,6 @@ const getSafeFormDate = (dateString?: string): string => {
   }
 
   try {
-    // Attempt to parse as ISO (handles YYYY-MM-DDTHH:mm:ss.sssZ)
     const parsedDate = parseISO(dateString);
     if (isValid(parsedDate)) {
       return format(parsedDate, 'yyyy-MM-dd');
@@ -56,25 +55,22 @@ const getSafeFormDate = (dateString?: string): string => {
     // parseISO failed
   }
 
-  // Check if it's already in YYYY-MM-DD format and is a valid date
   if (/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
     const [year, month, day] = dateString.split('-').map(Number);
-    const d = new Date(year, month - 1, day);
-    // Check if the components form a valid date (e.g. not 2023-02-30)
-    if (d && d.getFullYear() === year && d.getMonth() === month - 1 && d.getDate() === day) {
+    // Use UTC to avoid timezone shifts with new Date(y,m,d) during validation parts
+    const d = new Date(Date.UTC(year, month - 1, day));
+    if (d && d.getUTCFullYear() === year && d.getUTCMonth() === month - 1 && d.getUTCDate() === day) {
       return dateString;
     }
   }
   
-  // Fallback for other simple date formats like MM/DD/YYYY or M/D/YY
-  // This is a basic attempt, more robust parsing might be needed for international formats
   const parts = dateString.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2}|\d{4})$/);
   if (parts) {
-    const month = parseInt(parts[1], 10) -1; // month is 0-indexed
+    const month = parseInt(parts[1], 10) -1; 
     const day = parseInt(parts[2], 10);
     let year = parseInt(parts[3], 10);
-    if (year < 100) { // Handle YY format
-        year += (year > 50 ? 1900 : 2000); // Heuristic for 2-digit years
+    if (year < 100) { 
+        year += (new Date().getFullYear() - new Date().getFullYear() % 100 < year ? 1900 : 2000);
     }
     const parsedDate = new Date(year, month, day);
     if (isValid(parsedDate)) {
@@ -85,6 +81,26 @@ const getSafeFormDate = (dateString?: string): string => {
   console.warn(`Could not parse date string "${dateString}" into yyyy-MM-dd format. Defaulting to today.`);
   return defaultFormattedDate;
 };
+
+// Helper function to parse 'YYYY-MM-DD' string to a local Date object
+function parseDateStringToLocalDay(dateString?: string): Date | undefined {
+  if (!dateString || !/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
+    return undefined;
+  }
+  const parts = dateString.split('-');
+  const year = parseInt(parts[0], 10);
+  const month = parseInt(parts[1], 10) - 1; // Month is 0-indexed for Date constructor
+  const day = parseInt(parts[2], 10);
+
+  const date = new Date(year, month, day); // Creates date with local timezone midnight
+
+  if (isNaN(date.getTime())) return undefined;
+  // Validate that the constructor parameters resulted in the same date
+  if (date.getFullYear() === year && date.getMonth() === month && date.getDate() === day) {
+    return date;
+  }
+  return undefined;
+}
 
 
 export function ManualInvoiceForm({
@@ -159,7 +175,7 @@ export function ManualInvoiceForm({
           userId: userId,
           invoiceId: undefined,
           vendor: '',
-          date: getSafeFormDate(), // Default to today for create mode
+          date: getSafeFormDate(), 
           total: 0,
           lineItems: [{ description: '', amount: 0 }],
           isMonthlyRecurring: false,
@@ -201,7 +217,7 @@ export function ManualInvoiceForm({
         formDataPayload.append('invoiceId', data.invoiceId);
     }
     formDataPayload.append('vendor', data.vendor);
-    formDataPayload.append('invoiceDate', data.date); // This will be yyyy-MM-dd
+    formDataPayload.append('invoiceDate', data.date); 
     formDataPayload.append('total', data.total.toString());
     data.lineItems.forEach((item, index) => {
       formDataPayload.append(`lineItems[${index}].description`, item.description);
@@ -227,7 +243,7 @@ export function ManualInvoiceForm({
   return (
     <Dialog open={isOpen} onOpenChange={
         (open) => {
-            if(!open && mode === 'create' && !actionState?.invoice) { // Only reset create form if not successful
+            if(!open && mode === 'create' && !actionState?.invoice) { 
                  reset({
                     userId: userId,
                     invoiceId: undefined,
@@ -269,31 +285,35 @@ export function ManualInvoiceForm({
                  <Controller
                     name="date"
                     control={control}
-                    render={({ field }) => (
-                        <Popover>
-                        <PopoverTrigger asChild>
-                            <Button
-                            variant={"outline"}
-                            className={cn(
-                                "w-full justify-start text-left font-normal",
-                                !field.value && "text-muted-foreground"
-                            )}
-                            >
-                             <CalendarIcon className="mr-2 h-4 w-4" />
-                            {/* Ensure field.value is valid before formatting for display */}
-                            {field.value && isValid(parseISO(field.value)) ? format(parseISO(field.value), "PPP") : <span>Pick a date</span>}
-                            </Button>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-auto p-0">
-                            <Calendar
-                            mode="single"
-                            selected={field.value && isValid(parseISO(field.value)) ? parseISO(field.value) : undefined}
-                            onSelect={(date) => field.onChange(date ? format(date, 'yyyy-MM-dd') : '')}
-                            initialFocus
-                            />
-                        </PopoverContent>
-                        </Popover>
-                    )}
+                    render={({ field }) => {
+                        const dateForCalendar = field.value ? parseDateStringToLocalDay(field.value) : undefined;
+                        return (
+                            <Popover>
+                            <PopoverTrigger asChild>
+                                <Button
+                                variant={"outline"}
+                                className={cn(
+                                    "w-full justify-start text-left font-normal",
+                                    !field.value && "text-muted-foreground"
+                                )}
+                                >
+                                 <CalendarIcon className="mr-2 h-4 w-4" />
+                                {dateForCalendar && isValid(dateForCalendar) ? format(dateForCalendar, "PPP") : <span>Pick a date</span>}
+                                </Button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-auto p-0">
+                                <Calendar
+                                mode="single"
+                                selected={dateForCalendar}
+                                onSelect={(selectedDay) => {
+                                    field.onChange(selectedDay ? format(selectedDay, 'yyyy-MM-dd') : '');
+                                }}
+                                initialFocus
+                                />
+                            </PopoverContent>
+                            </Popover>
+                        );
+                    }}
                     />
                 {rhfErrors.date && <p className="text-sm text-destructive mt-1">{rhfErrors.date.message}</p>}
                 {actionState?.errors?.date && <p className="text-sm text-destructive mt-1">{actionState.errors.date.join(', ')}</p>}
@@ -389,10 +409,10 @@ export function ManualInvoiceForm({
                     >
                     <PlusCircle className="mr-2 h-4 w-4" /> Add Line Item
                     </Button>
-                    {rhfErrors.lineItems && typeof rhfErrors.lineItems === 'object' && !Array.isArray(rhfErrors.lineItems) && 'message' in rhfErrors.lineItems && ( // For array-level errors
+                    {rhfErrors.lineItems && typeof rhfErrors.lineItems === 'object' && !Array.isArray(rhfErrors.lineItems) && 'message' in rhfErrors.lineItems && ( 
                         <p className="text-sm text-destructive mt-1">{(rhfErrors.lineItems as any).message}</p>
                     )}
-                     {actionState?.errors?.lineItems && Array.isArray(actionState.errors.lineItems) && typeof actionState.errors.lineItems[0] === 'string' && ( // If array-level error string from server
+                     {actionState?.errors?.lineItems && Array.isArray(actionState.errors.lineItems) && typeof actionState.errors.lineItems[0] === 'string' && ( 
                         <p className="text-sm text-destructive mt-1">{actionState.errors.lineItems.join(', ')}</p>
                     )}
 
@@ -445,6 +465,8 @@ export function ManualInvoiceForm({
     </Dialog>
   );
 }
+    
+
     
 
     
