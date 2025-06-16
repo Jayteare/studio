@@ -11,7 +11,7 @@ import { detectRecurrence, type DetectRecurrenceInput, type DetectRecurrenceOutp
 import { ai } from '@/ai/genkit';
 import type { Invoice, LineItem } from '@/types/invoice';
 import { ManualInvoiceEntrySchema, type ManualInvoiceEntryData } from '@/types/invoice-form';
-import { format as formatDateFn } from 'date-fns';
+import { format as formatDateFn, parseISO, isValid, parse as parseDateFns } from 'date-fns';
 
 
 // Helper to convert File object to data URI and Buffer
@@ -36,6 +36,64 @@ export interface UploadInvoiceFormState {
 const INVOICES_COLLECTION = 'uploaded_invoices';
 const ATLAS_VECTOR_SEARCH_INDEX_NAME = 'vector_index_summary'; // As configured in Atlas
 
+
+// Helper to standardize date strings to YYYY-MM-DD
+function standardizeDateString(dateInput?: string): string {
+  const defaultDate = formatDateFn(new Date(), 'yyyy-MM-dd');
+  if (!dateInput || typeof dateInput !== 'string') {
+    console.warn('standardizeDateString: Received invalid or empty dateInput, defaulting to today.');
+    return defaultDate;
+  }
+
+  // 1. Check if already in YYYY-MM-DD and valid
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateInput)) {
+    const [year, month, day] = dateInput.split('-').map(Number);
+    // Use UTC to avoid timezone shifts affecting the date components during validation
+    const d = new Date(Date.UTC(year, month - 1, day));
+    if (d && d.getUTCFullYear() === year && d.getUTCMonth() === month - 1 && d.getUTCDate() === day) {
+      return dateInput;
+    }
+  }
+
+  // 2. Try parseISO for full ISO strings (e.g., with timezones)
+  try {
+    const isoParsedDate = parseISO(dateInput);
+    if (isValid(isoParsedDate)) {
+      return formatDateFn(isoParsedDate, 'yyyy-MM-dd');
+    }
+  } catch (e) { /* ignore, try other methods */ }
+
+  // 3. Try common formats
+  const commonFormats = [
+    'MM/dd/yyyy', 'M/d/yyyy', 'MM-dd-yyyy', 'M-d-yyyy',
+    'MM/dd/yy', 'M/d/yy',
+    'MMMM d, yyyy', 'MMM d, yyyy', 'MMMM do, yyyy', 'MMM do, yyyy'
+  ];
+  for (const fmt of commonFormats) {
+    try {
+      const parsed = parseDateFns(dateInput, fmt, new Date()); // Using current date as reference
+      if (isValid(parsed)) {
+        return formatDateFn(parsed, 'yyyy-MM-dd');
+      }
+    } catch (e) { /* try next format */ }
+  }
+
+  // 4. If it's a timestamp (milliseconds since epoch)
+  if (/^\d+$/.test(dateInput)) {
+      const numDate = parseInt(dateInput, 10);
+      if (numDate > 0) { 
+          const d = new Date(numDate);
+          if (isValid(d) && d.getFullYear() > 1900) { // Basic sanity check for year
+              return formatDateFn(d, 'yyyy-MM-dd');
+          }
+      }
+  }
+  
+  console.warn(`standardizeDateString: Could not parse date string "${dateInput}" into YYYY-MM-DD. Defaulting to today. Review AI date extraction or input source.`);
+  return defaultDate;
+}
+
+
 // Utility function to map MongoDB document to Invoice type
 function mapDocumentToInvoice(doc: any): Invoice {
   // Ensure doc is an object
@@ -47,7 +105,7 @@ function mapDocumentToInvoice(doc: any): Invoice {
       userId: 'ERROR_INVALID_DOC_USER',
       fileName: 'Invalid Document',
       vendor: 'N/A',
-      date: new Date(0).toISOString(),
+      date: new Date(0).toISOString().split('T')[0], // YYYY-MM-DD
       total: 0,
       lineItems: [],
       summary: `Error: Could not process document data for ID ${errorId}.`,
@@ -123,7 +181,7 @@ function mapDocumentToInvoice(doc: any): Invoice {
     userId,
     fileName: typeof doc.fileName === 'string' ? doc.fileName : 'Unknown File',
     vendor: typeof doc.vendor === 'string' ? doc.vendor : 'Unknown Vendor',
-    date: typeof doc.date === 'string' ? doc.date : 'Unknown Date',
+    date: typeof doc.date === 'string' ? doc.date : standardizeDateString(new Date(0).toISOString()), // Ensure date is string
     total: typeof doc.total === 'number' ? doc.total : 0,
     lineItems: lineItems,
     summary: typeof doc.summary === 'string' ? doc.summary : 'No summary available.',
@@ -175,10 +233,12 @@ export async function handleInvoiceUpload(
       console.error('Extraction failed or returned incomplete data:', extractedData);
       return { error: 'Failed to extract key data from invoice. The document might not be a valid invoice or is unreadable by the AI.' };
     }
+    
+    const dbDate = standardizeDateString(extractedData.date);
 
     const summaryInput: SummarizeInvoiceInput = {
       vendor: extractedData.vendor,
-      date: extractedData.date,
+      date: dbDate,
       total: extractedData.total,
       lineItems: extractedData.lineItems.map(item => ({
         description: item.description,
@@ -239,7 +299,7 @@ export async function handleInvoiceUpload(
       userId: new ObjectId(userIdString),
       fileName: file.name,
       vendor: extractedData.vendor,
-      date: extractedData.date, // Store as YYYY-MM-DD string as returned by AI
+      date: dbDate, 
       total: extractedData.total,
       lineItems: extractedData.lineItems.map(item => ({
         description: item.description,
@@ -267,7 +327,7 @@ export async function handleInvoiceUpload(
       userId: userIdString,
       fileName: file.name,
       vendor: extractedData.vendor,
-      date: extractedData.date,
+      date: dbDate,
       total: extractedData.total,
       lineItems: extractedData.lineItems as LineItem[],
       summary: summarizedData.summary,
@@ -348,7 +408,7 @@ export async function handleManualInvoiceEntry(
   const validatedFields = ManualInvoiceEntrySchema.safeParse({
     userId: rawFormData.userId,
     vendor: rawFormData.vendor,
-    date: rawFormData.date, // rawFormData.date is already 'yyyy-MM-dd'
+    date: rawFormData.date, // rawFormData.date is already 'yyyy-MM-dd' from client
     total: parseFloat(rawFormData.total), 
     lineItems: rawFormData.lineItems.map(li => ({
         description: li.description,
@@ -374,6 +434,7 @@ export async function handleManualInvoiceEntry(
   }
 
   const { userId, vendor, date, total, lineItems, isMonthlyRecurring, categoriesString } = validatedFields.data;
+  const dbDate = standardizeDateString(date); // Standardize date
   let finalCategories: string[] = [];
 
   const userProvidedCategories = (categoriesString || '').split(',').map(s => s.trim()).filter(s => s.length > 0);
@@ -381,7 +442,6 @@ export async function handleManualInvoiceEntry(
   if (userProvidedCategories.length > 0) {
     finalCategories = userProvidedCategories;
   } else {
-    // Call AI for categories if user didn't provide any
     try {
       const categorizationInput: CategorizeInvoiceInput = { vendor, lineItems };
       const categorizationOutput = await categorizeInvoice(categorizationInput);
@@ -392,14 +452,13 @@ export async function handleManualInvoiceEntry(
       }
     } catch (catError: any) {
       console.warn('Failed to categorize manual invoice:', catError.message);
-      finalCategories = ["Uncategorized"]; // Fallback
+      finalCategories = ["Uncategorized"]; 
     }
   }
 
 
   try {
-    // Date here is already 'yyyy-MM-dd' from validatedFields.data
-    const summaryInput: SummarizeInvoiceInput = { vendor, date, total, lineItems };
+    const summaryInput: SummarizeInvoiceInput = { vendor, date: dbDate, total, lineItems };
     const summarizedData = await summarizeInvoice(summaryInput);
 
     let recurrenceInfo: DetectRecurrenceOutput = { isLikelyRecurring: false };
@@ -432,14 +491,14 @@ export async function handleManualInvoiceEntry(
       }
     }
     
-    const fileName = `Manual - ${vendor} - ${date}.json`; // date is 'yyyy-MM-dd'
+    const fileName = `Manual - ${vendor} - ${dbDate}.json`; 
 
     const { db } = await connectToDatabase();
     const invoiceDocumentForDb = {
       userId: new ObjectId(userId),
       fileName,
       vendor,
-      date, // Store 'yyyy-MM-dd' string directly
+      date: dbDate, 
       total,
       lineItems,
       summary: summarizedData.summary,
@@ -485,7 +544,7 @@ export interface UpdateInvoiceFormState {
 }
 
 export async function handleUpdateInvoice(
-  invoiceIdToUpdate: string, // Bound to the action
+  invoiceIdToUpdate: string, 
   prevState: UpdateInvoiceFormState | undefined,
   formData: FormData
 ): Promise<UpdateInvoiceFormState> {
@@ -493,7 +552,7 @@ export async function handleUpdateInvoice(
     userId: formData.get('userId') as string,
     invoiceId: formData.get('invoiceId') as string, 
     vendor: formData.get('vendor') as string,
-    date: formData.get('invoiceDate') as string, // This is 'yyyy-MM-dd' from form
+    date: formData.get('invoiceDate') as string, 
     total: formData.get('total') as string,
     lineItems: [] as { description: string; amount: string }[],
     isMonthlyRecurring: formData.get('isMonthlyRecurring') === 'true',
@@ -517,7 +576,7 @@ export async function handleUpdateInvoice(
     userId: rawFormData.userId,
     invoiceId: rawFormData.invoiceId,
     vendor: rawFormData.vendor,
-    date: rawFormData.date, // date is 'yyyy-MM-dd'
+    date: rawFormData.date, // date is 'yyyy-MM-dd' from client
     total: parseFloat(rawFormData.total),
     lineItems: rawFormData.lineItems.map(li => ({
       description: li.description,
@@ -538,6 +597,7 @@ export async function handleUpdateInvoice(
   }
 
   const { userId, vendor, date, total, lineItems, isMonthlyRecurring, categoriesString } = validatedFields.data;
+  const dbDate = standardizeDateString(date); // Standardize date
 
   try {
     const { db } = await connectToDatabase();
@@ -557,22 +617,19 @@ export async function handleUpdateInvoice(
     const updatedIsLikelyRecurring = isMonthlyRecurring;
     const updatedRecurrenceReasoning = isMonthlyRecurring 
         ? "User marked as monthly recurring." 
-        : "User marked as not monthly recurring.";
+        : `User marked as not monthly recurring on ${formatDateFn(new Date(), 'yyyy-MM-dd')}.`; // Add date for clarity
     
-    const fileName = existingInvoice.gcsFileUri ? existingInvoice.fileName : `Manual - ${vendor} - ${date}.json`; // date is 'yyyy-MM-dd'
+    const fileName = existingInvoice.gcsFileUri ? existingInvoice.fileName : `Manual - ${vendor} - ${dbDate}.json`; 
 
-    // Fields that user can directly edit on the form
     const updateFields: Partial<Invoice> & { vendor: string; date: string; total: number; lineItems: LineItem[]; categories: string[]; isLikelyRecurring: boolean; recurrenceReasoning: string; fileName: string; } = {
       vendor,
-      date, // Store 'yyyy-MM-dd' string
+      date: dbDate, 
       total,
       lineItems,
       categories: updatedCategories,
       isLikelyRecurring: updatedIsLikelyRecurring,
       recurrenceReasoning: updatedRecurrenceReasoning,
       fileName,
-      // summary and summaryEmbedding are intentionally NOT updated here to preserve original AI generation
-      // unless specific logic is added to re-run AI summary/embedding if key fields change.
     };
 
     const updateResult = await db.collection(INVOICES_COLLECTION).updateOne(
@@ -1071,7 +1128,8 @@ export async function toggleInvoiceRecurrence(invoiceId: string, userId: string)
 
         const currentIsLikelyRecurring = currentInvoiceDoc.isLikelyRecurring || false;
         const newIsLikelyRecurring = !currentIsLikelyRecurring;
-        const newReasoning = `Manually set to ${newIsLikelyRecurring ? 'monthly recurring' : 'not monthly recurring'} by user on ${new Date().toLocaleDateString()}.`;
+        const newReasoning = `Manually set to ${newIsLikelyRecurring ? 'monthly recurring' : 'not monthly recurring'} by user on ${formatDateFn(new Date(), 'yyyy-MM-dd')}.`;
+
 
         const updateResult = await db.collection(INVOICES_COLLECTION).updateOne(
             { _id: currentInvoiceObjectId, userId: userObjectId },
@@ -1087,8 +1145,6 @@ export async function toggleInvoiceRecurrence(invoiceId: string, userId: string)
             return { error: 'Invoice not found or user not authorized.' };
         }
         if (updateResult.modifiedCount === 0) {
-            // If no modification happened, it might be because the state was already as intended.
-            // Re-fetch to ensure the client gets the definitive current state.
             const refreshedDoc = await db.collection(INVOICES_COLLECTION).findOne({ _id: currentInvoiceObjectId });
             if (!refreshedDoc) return { error: "Failed to retrieve invoice details after toggle."};
             const invoiceToReturn = mapDocumentToInvoice(refreshedDoc);
@@ -1129,14 +1185,13 @@ export async function fetchInvoicesByMonth(userId: string, year: number, month: 
     const { db } = await connectToDatabase();
     const userObjectId = new ObjectId(userId);
 
-    // Construct date strings for the beginning and end of the month
-    // Ensure invoice.date is stored as 'YYYY-MM-DD' in the database for this to work correctly.
-    const startDate = new Date(year, month - 1, 1); // month is 0-indexed for Date constructor
-    const endDate = new Date(year, month, 0); // Day 0 of next month gives last day of current month
-
-    const startQueryDate = formatDateFn(startDate, 'yyyy-MM-dd');
-    const endQueryDate = formatDateFn(endDate, 'yyyy-MM-dd');
+    const startDate = new Date(Date.UTC(year, month - 1, 1)); 
+    const endDate = new Date(Date.UTC(year, month, 1)); // Start of next month (exclusive)
     
+    // Format for string comparison in DB, as dates are stored as YYYY-MM-DD strings
+    const startQueryDate = formatDateFn(startDate, 'yyyy-MM-dd');
+    const endQueryDate = formatDateFn(new Date(Date.UTC(year, month, 0)), 'yyyy-MM-dd'); // Last day of current month for $lte
+
     const invoiceDocuments = await db
       .collection(INVOICES_COLLECTION)
       .find({
@@ -1147,7 +1202,7 @@ export async function fetchInvoicesByMonth(userId: string, year: number, month: 
           $lte: endQueryDate 
         }
       })
-      .sort({ date: 1, uploadedAt: -1 }) // Sort by invoice date, then upload time
+      .sort({ date: 1, uploadedAt: -1 }) 
       .toArray();
 
     const invoices: Invoice[] = invoiceDocuments.map(mapDocumentToInvoice);
