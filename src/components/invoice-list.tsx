@@ -16,7 +16,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { FileText, CalendarDays, CircleDollarSign, MessageSquareText, Info, Trash2, Settings, FileIcon, Tag } from 'lucide-react';
-import { format } from 'date-fns';
+import { format, parseISO, isValid } from 'date-fns';
 import Link from 'next/link';
 
 interface InvoiceListProps {
@@ -25,22 +25,53 @@ interface InvoiceListProps {
 }
 
 export function InvoiceList({ invoices, onDeleteInvoice }: InvoiceListProps) {
-  const formatDate = (dateString: string) => {
+  const formatDate = (dateString: string): string => {
+    if (!dateString) return 'N/A';
+
     try {
-      const date = new Date(dateString);
-      if (isNaN(date.getTime())) { 
-        const parts = dateString.match(/(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})/);
-        if(parts) {
-            let year = parseInt(parts[3]);
-            if (year < 100) year += 2000; // Basic year correction
-            return format(new Date(year, parseInt(parts[1])-1, parseInt(parts[2])), 'MMM dd, yyyy');
+        let date: Date;
+
+        // 1. Prioritize YYYY-MM-DD as local day
+        if (/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
+            const [yearStr, monthStr, dayStr] = dateString.split('-');
+            const year = parseInt(yearStr, 10);
+            const month = parseInt(monthStr, 10) - 1; // month is 0-indexed for new Date()
+            const day = parseInt(dayStr, 10);
+            date = new Date(year, month, day);
         }
-        return dateString; // Return original if parsing fails
-      }
-      return format(date, 'MMM dd, yyyy');
+        // 2. Try parseISO for full ISO strings (e.g., with timezones)
+        else {
+            const parsed = parseISO(dateString);
+            if (isValid(parsed)) {
+                date = parsed;
+            }
+            // 3. Try common formats like MM/DD/YYYY if others fail
+            else {
+                const commonFormatParts = dateString.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
+                if (commonFormatParts) {
+                    let year = parseInt(commonFormatParts[3], 10);
+                    // Basic heuristic for 2-digit years, assuming 21st century
+                    if (year < 100) year += 2000;
+                    const month = parseInt(commonFormatParts[1], 10) - 1;
+                    const day = parseInt(commonFormatParts[2], 10);
+                    date = new Date(year, month, day);
+                } else {
+                    // 4. Last resort: direct new Date() and hope for the best
+                    date = new Date(dateString);
+                }
+            }
+        }
+
+        // Final validation and formatting
+        if (isValid(date)) {
+            return format(date, 'MMM dd, yyyy');
+        } else {
+            console.warn(`Could not parse date string with any known method: ${dateString}. Displaying as is.`);
+            return dateString;
+        }
     } catch (error) {
-      console.warn(`Could not parse date: ${dateString}`);
-      return dateString;
+        console.warn(`Error formatting date: ${dateString}`, error);
+        return dateString;
     }
   };
 
@@ -144,9 +175,9 @@ export function InvoiceList({ invoices, onDeleteInvoice }: InvoiceListProps) {
                     <Badge variant="outline">{format(new Date(invoice.uploadedAt), 'MMM dd, yyyy')}</Badge>
                   </TableCell>
                   <TableCell className="text-center">
-                    <Button 
-                      variant="ghost" 
-                      size="icon" 
+                    <Button
+                      variant="ghost"
+                      size="icon"
                       onClick={() => onDeleteInvoice(invoice)}
                       aria-label="Delete invoice"
                       className="text-destructive hover:text-destructive/80"
