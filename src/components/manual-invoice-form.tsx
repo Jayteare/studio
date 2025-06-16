@@ -17,7 +17,7 @@ import { Loader2, PlusCircle, Save, Trash2, CalendarIcon, DollarSign, Edit } fro
 import { useToast } from '@/hooks/use-toast';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Calendar } from '@/components/ui/calendar';
-import { format, parseISO } from 'date-fns';
+import { format, parseISO, isValid } from 'date-fns';
 import { cn } from '@/lib/utils';
 
 interface ManualInvoiceFormActionState {
@@ -38,6 +38,54 @@ export interface ManualInvoiceFormProps {
   actionState: ManualInvoiceFormActionState | undefined;
   onFormSuccess?: (invoice: Invoice) => void;
 }
+
+// Helper function to safely parse and format date string for form input
+const getSafeFormDate = (dateString?: string): string => {
+  const defaultFormattedDate = format(new Date(), 'yyyy-MM-dd');
+  if (!dateString || typeof dateString !== 'string') {
+    return defaultFormattedDate;
+  }
+
+  try {
+    // Attempt to parse as ISO (handles YYYY-MM-DDTHH:mm:ss.sssZ)
+    const parsedDate = parseISO(dateString);
+    if (isValid(parsedDate)) {
+      return format(parsedDate, 'yyyy-MM-dd');
+    }
+  } catch (e) {
+    // parseISO failed
+  }
+
+  // Check if it's already in YYYY-MM-DD format and is a valid date
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
+    const [year, month, day] = dateString.split('-').map(Number);
+    const d = new Date(year, month - 1, day);
+    // Check if the components form a valid date (e.g. not 2023-02-30)
+    if (d && d.getFullYear() === year && d.getMonth() === month - 1 && d.getDate() === day) {
+      return dateString;
+    }
+  }
+  
+  // Fallback for other simple date formats like MM/DD/YYYY or M/D/YY
+  // This is a basic attempt, more robust parsing might be needed for international formats
+  const parts = dateString.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2}|\d{4})$/);
+  if (parts) {
+    const month = parseInt(parts[1], 10) -1; // month is 0-indexed
+    const day = parseInt(parts[2], 10);
+    let year = parseInt(parts[3], 10);
+    if (year < 100) { // Handle YY format
+        year += (year > 50 ? 1900 : 2000); // Heuristic for 2-digit years
+    }
+    const parsedDate = new Date(year, month, day);
+    if (isValid(parsedDate)) {
+        return format(parsedDate, 'yyyy-MM-dd');
+    }
+  }
+
+  console.warn(`Could not parse date string "${dateString}" into yyyy-MM-dd format. Defaulting to today.`);
+  return defaultFormattedDate;
+};
+
 
 export function ManualInvoiceForm({
     userId,
@@ -66,9 +114,7 @@ export function ManualInvoiceForm({
       userId: userId,
       invoiceId: mode === 'edit' && invoiceToEdit ? invoiceToEdit.id : undefined,
       vendor: mode === 'edit' && invoiceToEdit ? invoiceToEdit.vendor : '',
-      date: mode === 'edit' && invoiceToEdit?.date
-            ? format(parseISO(invoiceToEdit.date), 'yyyy-MM-dd')
-            : new Date().toISOString().split('T')[0],
+      date: mode === 'edit' && invoiceToEdit ? getSafeFormDate(invoiceToEdit.date) : getSafeFormDate(),
       total: mode === 'edit' && invoiceToEdit ? invoiceToEdit.total : 0,
       lineItems: mode === 'edit' && invoiceToEdit?.lineItems && invoiceToEdit.lineItems.length > 0
                  ? invoiceToEdit.lineItems.map(li => ({ description: li.description, amount: li.amount }))
@@ -95,16 +141,12 @@ export function ManualInvoiceForm({
 
   useEffect(() => {
     if (isOpen) {
-      const defaultDate = new Date().toISOString().split('T')[0];
       if (mode === 'edit' && invoiceToEdit) {
-        const editDate = invoiceToEdit.date
-            ? format(parseISO(invoiceToEdit.date), 'yyyy-MM-dd')
-            : defaultDate;
         reset({
           userId: userId,
           invoiceId: invoiceToEdit.id,
           vendor: invoiceToEdit.vendor,
-          date: editDate,
+          date: getSafeFormDate(invoiceToEdit.date),
           total: invoiceToEdit.total,
           lineItems: invoiceToEdit.lineItems && invoiceToEdit.lineItems.length > 0
                      ? invoiceToEdit.lineItems.map(li => ({ description: li.description, amount: li.amount }))
@@ -117,7 +159,7 @@ export function ManualInvoiceForm({
           userId: userId,
           invoiceId: undefined,
           vendor: '',
-          date: defaultDate,
+          date: getSafeFormDate(), // Default to today for create mode
           total: 0,
           lineItems: [{ description: '', amount: 0 }],
           isMonthlyRecurring: false,
@@ -159,7 +201,7 @@ export function ManualInvoiceForm({
         formDataPayload.append('invoiceId', data.invoiceId);
     }
     formDataPayload.append('vendor', data.vendor);
-    formDataPayload.append('invoiceDate', data.date);
+    formDataPayload.append('invoiceDate', data.date); // This will be yyyy-MM-dd
     formDataPayload.append('total', data.total.toString());
     data.lineItems.forEach((item, index) => {
       formDataPayload.append(`lineItems[${index}].description`, item.description);
@@ -185,12 +227,12 @@ export function ManualInvoiceForm({
   return (
     <Dialog open={isOpen} onOpenChange={
         (open) => {
-            if(!open && mode === 'create' && !actionState?.invoice) {
+            if(!open && mode === 'create' && !actionState?.invoice) { // Only reset create form if not successful
                  reset({
                     userId: userId,
                     invoiceId: undefined,
                     vendor: '',
-                    date: new Date().toISOString().split('T')[0],
+                    date: getSafeFormDate(),
                     total: 0,
                     lineItems: [{ description: '', amount: 0 }],
                     isMonthlyRecurring: false,
@@ -238,13 +280,14 @@ export function ManualInvoiceForm({
                             )}
                             >
                              <CalendarIcon className="mr-2 h-4 w-4" />
-                            {field.value ? format(parseISO(field.value), "PPP") : <span>Pick a date</span>}
+                            {/* Ensure field.value is valid before formatting for display */}
+                            {field.value && isValid(parseISO(field.value)) ? format(parseISO(field.value), "PPP") : <span>Pick a date</span>}
                             </Button>
                         </PopoverTrigger>
                         <PopoverContent className="w-auto p-0">
                             <Calendar
                             mode="single"
-                            selected={field.value ? parseISO(field.value) : undefined}
+                            selected={field.value && isValid(parseISO(field.value)) ? parseISO(field.value) : undefined}
                             onSelect={(date) => field.onChange(date ? format(date, 'yyyy-MM-dd') : '')}
                             initialFocus
                             />
@@ -272,6 +315,7 @@ export function ManualInvoiceForm({
                     This is a recurring monthly expense
                 </Label>
                  {rhfErrors.isMonthlyRecurring && <p className="text-sm text-destructive mt-1">{rhfErrors.isMonthlyRecurring.message}</p>}
+                 {actionState?.errors?.isMonthlyRecurring && <p className="text-sm text-destructive mt-1">{actionState.errors.isMonthlyRecurring.join(', ')}</p>}
               </div>
               
               <div>
@@ -283,7 +327,7 @@ export function ManualInvoiceForm({
                   className="text-sm"
                 />
                 <p className="text-xs text-muted-foreground mt-1">
-                  {mode === 'edit' ? 'Edit categories here.' : 'Leave empty to let AI suggest categories.'}
+                  {mode === 'edit' ? 'Edit categories here. User-provided list replaces AI suggestions.' : 'Leave empty to let AI suggest categories.'}
                 </p>
                 {rhfErrors.categoriesString && <p className="text-sm text-destructive mt-1">{rhfErrors.categoriesString.message}</p>}
                 {actionState?.errors?.categoriesString && <p className="text-sm text-destructive mt-1">{actionState.errors.categoriesString.join(', ')}</p>}
@@ -345,10 +389,12 @@ export function ManualInvoiceForm({
                     >
                     <PlusCircle className="mr-2 h-4 w-4" /> Add Line Item
                     </Button>
-                    {rhfErrors.lineItems && typeof rhfErrors.lineItems === 'object' && !Array.isArray(rhfErrors.lineItems) && 'message' in rhfErrors.lineItems && (
+                    {rhfErrors.lineItems && typeof rhfErrors.lineItems === 'object' && !Array.isArray(rhfErrors.lineItems) && 'message' in rhfErrors.lineItems && ( // For array-level errors
                         <p className="text-sm text-destructive mt-1">{(rhfErrors.lineItems as any).message}</p>
                     )}
-                    {actionState?.errors?.lineItems && typeof actionState.errors.lineItems === 'string' && <p className="text-sm text-destructive mt-1">{actionState.errors.lineItems}</p>}
+                     {actionState?.errors?.lineItems && Array.isArray(actionState.errors.lineItems) && typeof actionState.errors.lineItems[0] === 'string' && ( // If array-level error string from server
+                        <p className="text-sm text-destructive mt-1">{actionState.errors.lineItems.join(', ')}</p>
+                    )}
 
 
                 </CardContent>
@@ -399,5 +445,6 @@ export function ManualInvoiceForm({
     </Dialog>
   );
 }
+    
 
     
