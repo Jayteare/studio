@@ -768,24 +768,26 @@ export async function findSimilarInvoices(currentInvoiceId: string, userId: stri
     const pipeline = [
       {
         $vectorSearch: {
-          index: ATLAS_VECTOR_SEARCH_INDEX_NAME,
+          index: ATLAS_VECTOR_SEARCH_INDEX_NAME, // Ensure this index exists and is configured for 'summaryEmbedding'
           path: 'summaryEmbedding',
           queryVector: queryVector,
-          numCandidates: 50, 
-          limit: 6, 
+          numCandidates: 50, // Number of candidates to consider
+          limit: 6, // Return top 5 + current invoice if it matches itself
           filter: {
             userId: userObjectId,
             isDeleted: { $ne: true },
-            summaryEmbedding: { $exists: true, $type: 'array' },
+            summaryEmbedding: { $exists: true, $type: 'array' }, // Ensure docs have embeddings
           },
         },
       },
       { 
+        // Exclude the current invoice itself from the similar results
         $match: {
             _id: { $ne: currentInvoiceObjectId }
         }
       },
       { 
+          // Limit to top 5 *after* excluding the current one
           $limit: 5 
       }
     ];

@@ -8,9 +8,9 @@ import { fetchInvoiceById, type FetchInvoiceByIdResponse, findSimilarInvoices, t
 import type { Invoice, LineItem } from '@/types/invoice';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableCaption } from '@/components/ui/table';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, ArrowLeft, FileText, CalendarDays, CircleDollarSign, Info, AlertTriangle, ExternalLink, Copy, FileSearch, Tag } from 'lucide-react';
+import { Loader2, ArrowLeft, FileText, CalendarDays, CircleDollarSign, Info, AlertTriangle, ExternalLink, Copy, Tag } from 'lucide-react';
 import { format } from 'date-fns';
 import Link from 'next/link';
 import { AppLogo } from '@/components/app-logo';
@@ -75,8 +75,10 @@ export default function InvoiceDetailPage() {
   const loadSimilarInvoices = useCallback(async () => {
     if (!invoice || !user?.id) return;
 
+    // Only attempt to find similar if the current invoice has an embedding
     if (!invoice.summaryEmbedding || invoice.summaryEmbedding.length === 0) {
         setSimilarInvoices([]);
+        // Optionally, set a message like "No embedding available for similarity search."
         return;
     }
 
@@ -86,12 +88,14 @@ export default function InvoiceDetailPage() {
 
     if (response.error) {
       setErrorSimilar(response.error);
+      // Optionally show a toast for similar invoices error, but can be noisy
+      // toast({ title: 'Could not load similar invoices', description: response.error, variant: 'default' });
       setSimilarInvoices([]);
     } else if (response.similarInvoices) {
       setSimilarInvoices(response.similarInvoices);
     }
     setIsLoadingSimilar(false);
-  }, [invoice, user?.id]);
+  }, [invoice, user?.id, toast]); // Added toast to dependencies if used
 
   useEffect(() => {
     if (invoice && user?.id) {
@@ -103,41 +107,32 @@ export default function InvoiceDetailPage() {
   const formatDate = (dateString?: string) => {
     if (!dateString) return 'N/A';
     try {
-      // Attempt to parse as ISO string or common date formats
       let date = new Date(dateString);
-       // Check if the date is invalid (e.g. "Invalid Date" from new Date("some non-date string"))
       if (isNaN(date.getTime())) {
-        // Try a more specific parse for "MM/DD/YYYY" or "MM-DD-YYYY" like formats
         const parts = dateString.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
         if (parts) {
             let year = parseInt(parts[3], 10);
-            // Basic year correction for 2-digit years, assuming 2000s
             if (year < 100) year += 2000; 
             date = new Date(year, parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
         } else {
-            // If still invalid, return original string or a placeholder
             console.warn(`Could not parse date string: ${dateString}`);
             return dateString; 
         }
       }
-      // Ensure the date is now valid before formatting
       if (isNaN(date.getTime())) {
         console.warn(`Final parsed date is invalid for: ${dateString}`);
         return dateString;
       }
       
-      // If it's a date string like 'YYYY-MM-DD', time might be midnight UTC.
-      // For display, local time zone interpretation of date is often better.
-      // new Date(year, monthIndex, day) creates date in local timezone.
       if (dateString.match(/^\d{4}-\d{2}-\d{2}$/)) {
         const [year, month, day] = dateString.split('-').map(Number);
-        return format(new Date(year, month - 1, day), 'PPP'); // Format as 'MMM d, yyyy'
+        return format(new Date(year, month - 1, day), 'PPP');
       }
 
-      return format(date, 'PPP p'); // Format as 'MMM d, yyyy, h:mm:ss AM/PM'
+      return format(date, 'PPP p'); 
     } catch (error) {
       console.warn(`Error formatting date: ${dateString}`, error);
-      return dateString; // Fallback to original string
+      return dateString; 
     }
   };
 
@@ -212,7 +207,7 @@ export default function InvoiceDetailPage() {
                     <CardTitle className="font-headline text-3xl mb-1">{invoice.vendor || 'Invoice Details'}</CardTitle>
                     <CardDescription>Details for invoice: {invoice.fileName}</CardDescription>
                 </div>
-                {publicGcsUrl && invoice.gcsFileUri && ( // Only show if URI exists
+                {publicGcsUrl && invoice.gcsFileUri && (
                   <Button variant="outline" size="sm" asChild>
                     <Link href={publicGcsUrl} target="_blank" rel="noopener noreferrer">
                       <ExternalLink className="mr-2 h-4 w-4" />
@@ -304,14 +299,15 @@ export default function InvoiceDetailPage() {
            </CardFooter>
         </Card>
 
+        {/* Similar Invoices Section */}
         { (invoice.summaryEmbedding && invoice.summaryEmbedding.length > 0) && (
           <Card className="shadow-lg mt-8">
             <CardHeader>
               <CardTitle className="font-headline text-2xl flex items-center gap-2">
-                <Copy className="h-5 w-5 text-primary" />
+                <Copy className="h-5 w-5 text-primary" /> {/* Using Copy icon as a placeholder for similarity */}
                 Similar Invoices
               </CardTitle>
-              <CardDescription>Other invoices with similar content based on AI analysis.</CardDescription>
+              <CardDescription>Other invoices with similar content based on AI analysis of their summaries.</CardDescription>
             </CardHeader>
             <CardContent>
               {isLoadingSimilar && (
@@ -327,21 +323,23 @@ export default function InvoiceDetailPage() {
                 </div>
               )}
               {!isLoadingSimilar && !errorSimilar && similarInvoices.length === 0 && (
-                <p className="text-muted-foreground text-center py-6">No significantly similar invoices found.</p>
+                <p className="text-muted-foreground text-center py-6">No significantly similar invoices found for "{invoice.vendor}".</p>
               )}
               {!isLoadingSimilar && !errorSimilar && similarInvoices.length > 0 && (
                 <div className="space-y-4">
                   {similarInvoices.map((simInv) => (
                     <Card key={simInv.id} className="bg-muted/30 hover:shadow-md transition-shadow">
                       <CardContent className="p-4">
-                        <div className="flex justify-between items-start">
-                            <div>
+                        <div className="flex justify-between items-start gap-4">
+                            <div className="flex-1">
                                 <Link href={`/dashboard/invoice/${simInv.id}`} className="text-primary hover:underline">
                                     <h4 className="font-semibold">{simInv.vendor}</h4>
                                 </Link>
-                                <p className="text-xs text-muted-foreground truncate max-w-xs" title={simInv.fileName}>File: {simInv.fileName}</p>
+                                <p className="text-xs text-muted-foreground truncate max-w-xs" title={simInv.fileName}>
+                                  {simInv.gcsFileUri ? simInv.fileName : '(Manual Entry)'}
+                                </p>
                             </div>
-                            <div className="text-right">
+                            <div className="text-right shrink-0">
                                 <p className="font-semibold text-primary">{formatCurrency(simInv.total)}</p>
                                 <p className="text-xs text-muted-foreground">{formatDate(simInv.date).split(',')[0]}</p>
                             </div>
@@ -362,6 +360,11 @@ export default function InvoiceDetailPage() {
                 </div>
               )}
             </CardContent>
+             { !isLoadingSimilar && !errorSimilar && similarInvoices.length > 0 && (
+                <CardFooter className="text-xs text-muted-foreground justify-center">
+                    Found {similarInvoices.length} similar invoice{similarInvoices.length === 1 ? "" : "s"}.
+                </CardFooter>
+            )}
           </Card>
         )}
       </main>
@@ -378,7 +381,6 @@ export default function InvoiceDetailPage() {
 
 // Re-define Label component locally as it's not exported from ui/label if not using Form context
 // Or ensure it's exported from a shared location if used across multiple non-form pages.
-// For simplicity here, keeping it local if only used on this page.
 const Label: React.FC<React.HTMLAttributes<HTMLLabelElement>> = ({ className, children, ...props }) => (
   <label className={cn("block text-sm font-medium text-muted-foreground", className)} {...props}>
     {children}
