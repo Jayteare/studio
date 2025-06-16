@@ -151,7 +151,7 @@ export function ManualInvoiceForm({
 
   useEffect(() => {
     const newTotal = lineItems.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
-    setValue('total', newTotal, { shouldValidate: true });
+    setValue('total', newTotal);
   }, [lineItems, setValue]);
 
 
