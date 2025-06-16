@@ -27,21 +27,19 @@ export interface ManualInvoiceFormProps {
   invoiceToEdit?: Invoice | null;
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
-  // Pass the server action from the parent (e.g., handleManualInvoiceEntry or handleUpdateInvoice)
-  // The parent will use useActionState to get this action function and the pending state.
-  serverAction: (formData: FormData) => Promise<any>; // 'any' because return type varies (ManualInvoiceFormState | UpdateInvoiceFormState)
+  serverAction: (formData: FormData) => Promise<any>; 
   isActionPending: boolean;
-  onFormSuccess?: (invoice: Invoice) => void; // Callback for parent to update its state
+  onFormSuccess?: (invoice: Invoice) => void; 
 }
 
 type FormData = ManualInvoiceEntryData;
 
 
-export function ManualInvoiceForm({ 
-    userId, 
+export function ManualInvoiceForm({
+    userId,
     mode,
     invoiceToEdit,
-    isOpen, 
+    isOpen,
     onOpenChange,
     serverAction,
     isActionPending,
@@ -49,30 +47,31 @@ export function ManualInvoiceForm({
 }: ManualInvoiceFormProps) {
   const { toast } = useToast();
 
-  const defaultDate = invoiceToEdit?.date 
-    ? format(parseISO(invoiceToEdit.date), 'yyyy-MM-dd') 
-    : new Date().toISOString().split('T')[0];
-
   const {
     control,
     handleSubmit,
     register,
     reset,
-    formState: { errors, isSubmitting: isRHFSubmitting }, // isSubmitting from RHF
+    formState: { errors, isSubmitting: isRHFSubmitting },
     setValue,
-    watch, // Add watch
+    watch,
   } = useForm<FormData>({
     resolver: zodResolver(ManualInvoiceEntrySchema),
     defaultValues: {
       userId: userId,
-      invoiceId: invoiceToEdit?.id || undefined,
-      vendor: invoiceToEdit?.vendor || '',
-      date: defaultDate,
-      total: invoiceToEdit?.total || 0,
-      lineItems: invoiceToEdit?.lineItems && invoiceToEdit.lineItems.length > 0 
-                 ? invoiceToEdit.lineItems.map(li => ({ description: li.description, amount: li.amount })) 
+      invoiceId: mode === 'edit' && invoiceToEdit ? invoiceToEdit.id : undefined,
+      vendor: mode === 'edit' && invoiceToEdit ? invoiceToEdit.vendor : '',
+      date: mode === 'edit' && invoiceToEdit?.date
+            ? format(parseISO(invoiceToEdit.date), 'yyyy-MM-dd')
+            : new Date().toISOString().split('T')[0],
+      total: mode === 'edit' && invoiceToEdit ? invoiceToEdit.total : 0,
+      lineItems: mode === 'edit' && invoiceToEdit?.lineItems && invoiceToEdit.lineItems.length > 0
+                 ? invoiceToEdit.lineItems.map(li => ({ description: li.description, amount: li.amount }))
                  : [{ description: '', amount: 0 }],
-      isMonthlyRecurring: invoiceToEdit?.isLikelyRecurring || false,
+      isMonthlyRecurring: mode === 'edit' && invoiceToEdit ? invoiceToEdit.isLikelyRecurring || false : false,
+      categoriesString: mode === 'edit' && invoiceToEdit?.categories?.length
+                        ? invoiceToEdit.categories.join(', ')
+                        : '',
     },
   });
 
@@ -81,7 +80,6 @@ export function ManualInvoiceForm({
     name: 'lineItems',
   });
 
-  // Watch lineItems to auto-calculate total
   const lineItems = watch('lineItems');
 
   useEffect(() => {
@@ -91,21 +89,22 @@ export function ManualInvoiceForm({
 
 
   useEffect(() => {
-    if (isOpen) { // Only reset/populate when dialog opens or mode/invoiceToEdit changes while open
+    if (isOpen) {
       if (mode === 'edit' && invoiceToEdit) {
-        const editDate = invoiceToEdit.date 
-            ? format(parseISO(invoiceToEdit.date), 'yyyy-MM-dd') 
+        const editDate = invoiceToEdit.date
+            ? format(parseISO(invoiceToEdit.date), 'yyyy-MM-dd')
             : new Date().toISOString().split('T')[0];
         reset({
           userId: userId,
           invoiceId: invoiceToEdit.id,
           vendor: invoiceToEdit.vendor,
           date: editDate,
-          total: invoiceToEdit.total, // Will be recalculated by useEffect if lineItems change
-          lineItems: invoiceToEdit.lineItems && invoiceToEdit.lineItems.length > 0 
+          total: invoiceToEdit.total,
+          lineItems: invoiceToEdit.lineItems && invoiceToEdit.lineItems.length > 0
                      ? invoiceToEdit.lineItems.map(li => ({ description: li.description, amount: li.amount }))
                      : [{ description: '', amount: 0 }],
           isMonthlyRecurring: invoiceToEdit.isLikelyRecurring || false,
+          categoriesString: invoiceToEdit.categories?.join(', ') || '',
         });
       } else if (mode === 'create') {
         reset({
@@ -116,11 +115,12 @@ export function ManualInvoiceForm({
           total: 0,
           lineItems: [{ description: '', amount: 0 }],
           isMonthlyRecurring: false,
+          categoriesString: '',
         });
       }
     }
-  }, [mode, invoiceToEdit, reset, userId, isOpen]); // Add isOpen to dependency array
-  
+  }, [mode, invoiceToEdit, reset, userId, isOpen]);
+
 
   const processForm = async (data: FormData) => {
     const formDataPayload = new FormData();
@@ -136,7 +136,9 @@ export function ManualInvoiceForm({
       formDataPayload.append(`lineItems[${index}].amount`, item.amount.toString());
     });
     formDataPayload.append('isMonthlyRecurring', data.isMonthlyRecurring ? 'true' : 'false');
-    
+    formDataPayload.append('categoriesString', data.categoriesString || '');
+
+
     React.startTransition(() => {
       serverAction(formDataPayload).then(actionResult => {
         if (actionResult?.error) {
@@ -155,16 +157,16 @@ export function ManualInvoiceForm({
           if (onFormSuccess) {
             onFormSuccess(actionResult.invoice);
           }
-          onOpenChange(false); 
+          onOpenChange(false);
         }
       });
     });
   };
-  
+
   const dialogTitle = mode === 'edit' ? 'Edit Invoice' : 'Add Manual Invoice';
-  const dialogDescription = mode === 'edit' 
-    ? 'Update the details for this invoice. AI-generated fields will be re-processed.'
-    : 'Enter the details for an invoice manually. Mark if it\'s a recurring monthly expense.';
+  const dialogDescription = mode === 'edit'
+    ? 'Update the details for this invoice. AI-generated fields (summary, categories, recurrence) will be re-processed. You can manually set categories below.'
+    : 'Enter the details for an invoice manually. Mark if it\'s a recurring monthly expense. Provide categories or let AI suggest them.';
   const submitButtonText = mode === 'edit' ? 'Save Changes' : 'Save Invoice';
   const SubmitIcon = mode === 'edit' ? Edit : Save;
 
@@ -174,8 +176,17 @@ export function ManualInvoiceForm({
   return (
     <Dialog open={isOpen} onOpenChange={
         (open) => {
-            if(!open) { 
-                 // Reset logic now handled by useEffect with isOpen dependency
+            if(!open && mode === 'create') { // Reset create form on close if it wasn't submitted
+                 reset({
+                    userId: userId,
+                    invoiceId: undefined,
+                    vendor: '',
+                    date: new Date().toISOString().split('T')[0],
+                    total: 0,
+                    lineItems: [{ description: '', amount: 0 }],
+                    isMonthlyRecurring: false,
+                    categoriesString: '',
+                });
             }
             onOpenChange(open);
         }
@@ -194,7 +205,6 @@ export function ManualInvoiceForm({
               {mode === 'edit' && invoiceToEdit && (
                 <input type="hidden" {...register('invoiceId')} value={invoiceToEdit.id} />
               )}
-
 
               <div>
                 <Label htmlFor="vendor">Vendor Name</Label>
@@ -234,8 +244,8 @@ export function ManualInvoiceForm({
                     />
                 {errors.date && <p className="text-sm text-destructive mt-1">{errors.date.message}</p>}
               </div>
-              
-               <div className="flex items-center space-x-2">
+
+              <div className="flex items-center space-x-2">
                 <Controller
                     name="isMonthlyRecurring"
                     control={control}
@@ -253,6 +263,20 @@ export function ManualInvoiceForm({
                  {errors.isMonthlyRecurring && <p className="text-sm text-destructive mt-1">{errors.isMonthlyRecurring.message}</p>}
               </div>
 
+              {/* Categories Input Field */}
+              <div>
+                <Label htmlFor="categoriesString">Categories (comma-separated)</Label>
+                <Input
+                  id="categoriesString"
+                  {...register('categoriesString')}
+                  placeholder="e.g., Software, Office Supplies, Travel"
+                  className="text-sm"
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  Leave empty to let AI suggest categories.
+                </p>
+                {errors.categoriesString && <p className="text-sm text-destructive mt-1">{errors.categoriesString.message}</p>}
+              </div>
 
               <Card>
                 <CardHeader>
@@ -280,7 +304,7 @@ export function ManualInvoiceForm({
                                 step="0.01"
                                 {...register(`lineItems.${index}.amount`, { valueAsNumber: true })}
                                 placeholder="Amount"
-                                className="text-sm pl-7"
+                                className="text-sm pl-7" // Added pl-7 for DollarSign
                             />
                         {errors.lineItems?.[index]?.amount && (
                             <p className="text-xs text-destructive">{errors.lineItems[index]?.amount?.message}</p>
@@ -315,15 +339,18 @@ export function ManualInvoiceForm({
 
               <div>
                 <Label htmlFor="total">Total Amount</Label>
-                <Input 
-                    id="total" 
-                    type="number" 
-                    step="0.01" 
-                    {...register('total', { valueAsNumber: true })} 
-                    placeholder="0.00" 
-                    className="font-semibold" 
-                    readOnly // Make total read-only
-                />
+                <div className="relative flex items-center">
+                  <DollarSign className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+                  <Input
+                      id="total"
+                      type="number"
+                      step="0.01"
+                      {...register('total', { valueAsNumber: true })}
+                      placeholder="0.00"
+                      className="font-semibold pl-7" // Added pl-7 for DollarSign
+                      readOnly 
+                  />
+                </div>
                 {errors.total && <p className="text-sm text-destructive mt-1">{errors.total.message}</p>}
               </div>
 
@@ -331,7 +358,7 @@ export function ManualInvoiceForm({
           </ScrollArea>
           <DialogFooter className="pt-6">
             <DialogClose asChild>
-                <Button type="button" variant="outline" onClick={() => { 
+                <Button type="button" variant="outline" onClick={() => {
                     onOpenChange(false);
                     }}>Cancel</Button>
             </DialogClose>
