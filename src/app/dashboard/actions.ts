@@ -208,6 +208,14 @@ export async function handleInvoiceUpload(
     return { error: 'User ID is missing. Cannot process invoice.' };
   }
 
+  let userObjectId: ObjectId;
+  try {
+    userObjectId = new ObjectId(userIdString);
+  } catch (e) {
+    console.error('Invalid User ID format for BSON ObjectId:', userIdString, e);
+    return { error: 'Invalid User ID format. Please ensure you are logged in correctly.' };
+  }
+
   if (!file || file.size === 0) {
     return { error: 'No file uploaded or file is empty.' };
   }
@@ -228,11 +236,6 @@ export async function handleInvoiceUpload(
   try {
     fileData = await prepareFileData(file);
     const extractedData: ExtractInvoiceDataOutput = await extractInvoiceData({ invoiceDataUri: fileData.dataUri });
-
-    if (!extractedData || !extractedData.vendor || typeof extractedData.total === 'undefined') {
-      console.error('Extraction failed or returned incomplete data:', extractedData);
-      return { error: 'Failed to extract key data from invoice. The document might not be a valid invoice or is unreadable by the AI.' };
-    }
     
     const dbDate = standardizeDateString(extractedData.date);
 
@@ -296,7 +299,7 @@ export async function handleInvoiceUpload(
 
     const { db } = await connectToDatabase();
     const invoiceDocumentForDb = {
-      userId: new ObjectId(userIdString),
+      userId: userObjectId, // Use the validated ObjectId
       fileName: file.name,
       vendor: extractedData.vendor,
       date: dbDate, 
@@ -345,30 +348,47 @@ export async function handleInvoiceUpload(
       message: `Successfully processed ${file.name}. Data saved, categorized, and file stored.`
     };
 
-  } catch (error: any)
-{
-    console.error('Error processing invoice:', error);
-    let errorMessage = 'An unexpected error occurred while processing the invoice.';
-    if (error instanceof Error) {
-      errorMessage = error.message;
-    } else if (typeof error === 'string') {
-      errorMessage = error;
+  } catch (error: any) {
+    console.error('--- DETAILED ERROR DURING INVOICE UPLOAD ---');
+    console.error('Timestamp:', new Date().toISOString());
+    console.error('Raw error object:', error);
+    if (error && typeof error === 'object') {
+      console.error('Error Type/Name:', error.name || (error.constructor && error.constructor.name) || 'N/A');
+      console.error('Error Message:', error.message || 'N/A');
+      if (error.stack) {
+        console.error('Error Stack:', error.stack);
+      }
+      if (error.code) { 
+        console.error('Error Code:', error.code);
+      }
+      if (error.details) { 
+        console.error('Error Details:', JSON.stringify(error.details, null, 2));
+      }
     }
+    console.error('--- END OF DETAILED ERROR ---');
 
+    let userFriendlyMessage = 'An unexpected error occurred while processing your invoice. Please try again later or contact support if the issue persists.';
 
     if (error?.name === 'BSONError' && error?.message?.includes('input must be a 24 character hex string')) {
-      errorMessage = 'Invalid User ID format for database operation.';
-    } else if (errorMessage.includes('Deadline exceeded') || errorMessage.includes('unavailable')) {
-      errorMessage = 'The AI service is currently unavailable or timed out. Please try again later.';
-    } else if (errorMessage.includes('Invalid media type') || errorMessage.includes('Unsupported input content type')) {
-      errorMessage = "The AI service could not process the file's format. Please ensure it's a clear PDF, JPG, or PNG.";
-    } else if (errorMessage.includes('unparsable') || errorMessage.includes('malformed')) {
-      errorMessage = 'The uploaded file appears to be corrupted or unreadable.';
-    } else if (errorMessage.includes('GCS Upload Error') || (error?.message && error?.message.startsWith('GCS Upload Error'))) {
-      errorMessage = `Failed to store invoice file in Cloud Storage: ${error.message.replace('GCS UploadError: ', '')}`;
+      userFriendlyMessage = 'There was an issue validating your user session. Please try logging out and logging back in.';
+    } else if (error?.message?.includes('Deadline exceeded') || error?.message?.includes('unavailable') || (error?.code && (error.code === 'UNAVAILABLE' || error.code === 503 || error.code === 14))) { // 14 is gRPC code for UNAVAILABLE
+      userFriendlyMessage = 'The AI service is currently experiencing high load or is temporarily unavailable. Please try again in a few minutes.';
+    } else if (error?.message?.includes('Invalid media type') || error?.message?.includes('Unsupported input content type')) {
+      userFriendlyMessage = "The AI service could not process the file's format. Please ensure it's a clear PDF, JPG, PNG, or WEBP image.";
+    } else if (error?.message?.includes('unparsable') || error?.message?.includes('malformed')) {
+      userFriendlyMessage = 'The uploaded file appears to be corrupted or unreadable. Please try a different file.';
+    } else if (error?.message?.startsWith('GCS Upload Error')) {
+      userFriendlyMessage = 'Failed to store the invoice file. Please try again. If the problem continues, check storage configuration.';
+    } else if (error?.message?.includes('extractInvoiceDataFlow') || error?.message?.includes('summarizeInvoiceFlow')) {
+        // Catch specific errors from AI flows if they were not caught by more general checks
+        userFriendlyMessage = `AI processing failed: ${error.message}`;
+    } else if (error instanceof Error && error.message) {
+        if (error.message.length < 200 && !/[{}[\]<>]/.test(error.message)) {
+            userFriendlyMessage = error.message;
+        }
     }
-
-    return { error: errorMessage };
+    
+    return { error: userFriendlyMessage };
   }
 }
 
