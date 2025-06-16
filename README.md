@@ -126,3 +126,4 @@ While Invoice Insights is a strong MVP, there are many exciting avenues for futu
 *   **Bulk Operations:** Enable users to perform actions like categorizing or deleting multiple invoices at once.
 
 These enhancements would further solidify Invoice Insights as an indispensable tool for managing business and personal finances.
+
