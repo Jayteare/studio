@@ -40,7 +40,7 @@ Essentially, Invoice Insights transforms raw invoice documents into organized, s
     *   **Lucide React:** For icons.
     *   **Recharts:** For rendering the spending distribution bar chart.
     *   **React Hook Form:** For managing complex form state and validation.
-*   **Backend (Server Actions & API Flows):**
+*   **Backend (Server Actions & AI Flows):**
     *   **Genkit (v1.x):** The core AI orchestration framework, used to define and manage flows that interact with Google AI models.
     *   **Google AI (Gemini models via Genkit):**
         *   Document AI capabilities (simulated via Gemini Pro Vision) for extracting data from invoice images/PDFs (`extractInvoiceDataFlow`).
@@ -65,6 +65,18 @@ Essentially, Invoice Insights transforms raw invoice documents into organized, s
 2.  **Genkit for AI Orchestration:** Using Genkit allowed for structured AI flows, making it easier to manage prompts, input/output schemas, and interactions with different AI models.
 3.  **MongoDB for Flexibility and Vector Search:** MongoDB's flexible schema was suitable for storing diverse invoice data, and its Atlas Vector Search capability was crucial for the "similar invoices" feature.
 4.  **Decoupled AI Flows:** Each AI task (extraction, summarization, categorization, recurrence detection) was implemented as a separate, reusable Genkit flow, promoting modularity.
+
+## Built with
+
+*   **Languages:** TypeScript, Node.js
+*   **Frontend Frameworks/Libraries:** Next.js 15 (App Router), React, ShadCN/UI, Tailwind CSS
+*   **Frontend UI Components & Utilities:** Lucide React (Icons), Recharts (Charts), React Hook Form
+*   **Backend & AI Frameworks:** Genkit (v1.x)
+*   **AI Services & APIs:** Google AI (Gemini Pro, Gemini Pro Vision via Genkit)
+*   **Database:** MongoDB Atlas, MongoDB Atlas Vector Search
+*   **Cloud Services:** Google Cloud Storage (GCS)
+*   **Authentication:** Bcrypt.js (for password hashing), Custom with MongoDB
+*   **Development Environment:** Firebase Studio
 
 ## Challenges I ran into
 
