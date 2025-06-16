@@ -105,7 +105,7 @@ function mapDocumentToInvoice(doc: any): Invoice {
       userId: 'ERROR_INVALID_DOC_USER',
       fileName: 'Invalid Document',
       vendor: 'N/A',
-      date: new Date(0).toISOString().split('T')[0], // YYYY-MM-DD
+      date: standardizeDateString(new Date(0).toISOString()), 
       total: 0,
       lineItems: [],
       summary: `Error: Could not process document data for ID ${errorId}.`,
@@ -133,65 +133,109 @@ function mapDocumentToInvoice(doc: any): Invoice {
     console.warn(`Invalid or missing userId for document ID ${id}:`, doc.userId);
     userId = 'UNKNOWN_USER';
   }
+  
+  const fileName = (typeof doc.fileName === 'string' && doc.fileName) ? doc.fileName : 'Unknown File';
+  const vendor = (typeof doc.vendor === 'string' && doc.vendor) ? doc.vendor : 'Unknown Vendor';
+  const date = (typeof doc.date === 'string' && doc.date) ? doc.date : standardizeDateString(new Date(0).toISOString());
+  const total = typeof doc.total === 'number' ? doc.total : 0;
+  const summary = (typeof doc.summary === 'string' && doc.summary) ? doc.summary : 'No summary available.';
+  const gcsFileUri = typeof doc.gcsFileUri === 'string' ? doc.gcsFileUri : undefined;
+  const isDeleted = typeof doc.isDeleted === 'boolean' ? doc.isDeleted : false;
+  
+  const recurrenceReasoning = typeof doc.recurrenceReasoning === 'string' ? doc.recurrenceReasoning : undefined;
+  const isLikelyRecurring = typeof doc.isLikelyRecurring === 'boolean' ? doc.isLikelyRecurring : undefined;
+
 
   let uploadedAtISO: string;
-  if (doc.uploadedAt instanceof Date) {
-    uploadedAtISO = doc.uploadedAt.toISOString();
+  if (doc.uploadedAt instanceof Date && !isNaN(doc.uploadedAt.getTime())) {
+      uploadedAtISO = doc.uploadedAt.toISOString();
   } else if (typeof doc.uploadedAt === 'string') {
-    const parsedDate = new Date(doc.uploadedAt);
-    uploadedAtISO = !isNaN(parsedDate.getTime()) ? parsedDate.toISOString() : new Date(0).toISOString();
-    if (isNaN(parsedDate.getTime())) console.warn(`Invalid uploadedAt date format for invoice ID ${id}: ${doc.uploadedAt}`);
+      const parsedDate = parseISO(doc.uploadedAt);
+      if (isValid(parsedDate)) {
+          uploadedAtISO = parsedDate.toISOString();
+      } else {
+          const directParsed = new Date(doc.uploadedAt);
+          if (isValid(directParsed)) {
+            uploadedAtISO = directParsed.toISOString();
+          } else {
+            console.warn(`Invalid uploadedAt date string for invoice ID ${id}: "${doc.uploadedAt}". Defaulting.`);
+            uploadedAtISO = new Date(0).toISOString();
+          }
+      }
   } else {
-    console.warn(`Missing or invalid uploadedAt for invoice ID ${id}, type: ${typeof doc.uploadedAt}`);
-    uploadedAtISO = new Date(0).toISOString();
+      if (doc.uploadedAt !== undefined && doc.uploadedAt !== null) {
+        console.warn(`Missing or invalid type for uploadedAt (expected Date or string) for invoice ID ${id}: ${typeof doc.uploadedAt}. Defaulting.`);
+      }
+      uploadedAtISO = new Date(0).toISOString();
   }
 
   let deletedAtISO: string | undefined = undefined;
-  if (doc.deletedAt instanceof Date) {
+  if (doc.deletedAt instanceof Date && !isNaN(doc.deletedAt.getTime())) {
     deletedAtISO = doc.deletedAt.toISOString();
   } else if (typeof doc.deletedAt === 'string') {
-    const parsedDate = new Date(doc.deletedAt);
-    deletedAtISO = !isNaN(parsedDate.getTime()) ? parsedDate.toISOString() : undefined;
-    if (isNaN(parsedDate.getTime())) console.warn(`Invalid deletedAt date format for invoice ID ${id}: ${doc.deletedAt}`);
+    const parsedDate = parseISO(doc.deletedAt);
+    if (isValid(parsedDate)) {
+        deletedAtISO = parsedDate.toISOString();
+    } else {
+        const directParsed = new Date(doc.deletedAt);
+        if (isValid(directParsed)) {
+            deletedAtISO = directParsed.toISOString();
+        } else {
+            console.warn(`Invalid deletedAt date string for invoice ID ${id}: "${doc.deletedAt}". Not setting.`);
+            deletedAtISO = undefined;
+        }
+    }
   } else if (doc.deletedAt !== null && doc.deletedAt !== undefined) {
-    console.warn(`Invalid deletedAt type for invoice ID ${id}: ${typeof doc.deletedAt}`);
+    console.warn(`Invalid deletedAt type (expected Date or string) for invoice ID ${id}: ${typeof doc.deletedAt}. Not setting.`);
   }
 
-  const lineItems: LineItem[] = Array.isArray(doc.lineItems) ? doc.lineItems.map((item: any) => ({
-    description: (item && typeof item.description === 'string') ? item.description : 'N/A',
-    amount: (item && typeof item.amount === 'number') ? item.amount : 0,
-  })) : [];
-  if (!Array.isArray(doc.lineItems) && doc.lineItems !== undefined && doc.lineItems !== null) {
+
+  const lineItems: LineItem[] = [];
+  if (Array.isArray(doc.lineItems)) {
+    doc.lineItems.forEach((item: any, index: number) => {
+      if (item && typeof item === 'object') {
+        lineItems.push({
+          description: (typeof item.description === 'string' && item.description) ? item.description : `Item ${index + 1} - N/A`,
+          amount: typeof item.amount === 'number' ? item.amount : 0,
+        });
+      } else {
+        console.warn(`Invalid line item at index ${index} for invoice ID ${id}:`, item);
+      }
+    });
+  } else if (doc.lineItems !== undefined && doc.lineItems !== null) {
     console.warn(`lineItems is not an array for invoice ID ${id}:`, doc.lineItems);
   }
   
-  const categories: string[] | undefined = Array.isArray(doc.categories) 
-    ? doc.categories.filter((cat: any) => typeof cat === 'string') 
+  const categories: string[] | undefined = (Array.isArray(doc.categories) && doc.categories.every(cat => typeof cat === 'string')) 
+    ? doc.categories.filter(cat => cat.trim() !== "") // Filter out empty strings just in case
     : undefined;
   if (doc.categories !== undefined && !Array.isArray(doc.categories)) {
       console.warn(`categories is not an array for invoice ID ${id}:`, doc.categories);
   }
 
-  const isLikelyRecurring: boolean | undefined = typeof doc.isLikelyRecurring === 'boolean' ? doc.isLikelyRecurring : undefined;
-  const recurrenceReasoning: string | undefined = typeof doc.recurrenceReasoning === 'string' ? doc.recurrenceReasoning : undefined;
-
-
+  const summaryEmbedding: number[] | undefined = (Array.isArray(doc.summaryEmbedding) && doc.summaryEmbedding.every(num => typeof num === 'number'))
+    ? doc.summaryEmbedding
+    : undefined;
+  if (doc.summaryEmbedding !== undefined && !Array.isArray(doc.summaryEmbedding)) {
+      console.warn(`summaryEmbedding is not an array for invoice ID ${id}:`, doc.summaryEmbedding);
+  }
+  
   return {
     id,
     userId,
-    fileName: typeof doc.fileName === 'string' ? doc.fileName : 'Unknown File',
-    vendor: typeof doc.vendor === 'string' ? doc.vendor : 'Unknown Vendor',
-    date: typeof doc.date === 'string' ? doc.date : standardizeDateString(new Date(0).toISOString()), // Ensure date is string
-    total: typeof doc.total === 'number' ? doc.total : 0,
-    lineItems: lineItems,
-    summary: typeof doc.summary === 'string' ? doc.summary : 'No summary available.',
-    summaryEmbedding: Array.isArray(doc.summaryEmbedding) && doc.summaryEmbedding.every(num => typeof num === 'number') ? doc.summaryEmbedding as number[] : undefined,
-    categories: categories,
-    isLikelyRecurring: isLikelyRecurring,
-    recurrenceReasoning: recurrenceReasoning,
+    fileName,
+    vendor,
+    date, 
+    total,
+    lineItems,
+    summary,
+    summaryEmbedding,
+    categories,
+    isLikelyRecurring,
+    recurrenceReasoning,
     uploadedAt: uploadedAtISO,
-    gcsFileUri: typeof doc.gcsFileUri === 'string' ? doc.gcsFileUri : undefined,
-    isDeleted: !!doc.isDeleted,
+    gcsFileUri,
+    isDeleted,
     deletedAt: deletedAtISO,
   };
 }
@@ -329,23 +373,11 @@ export async function handleInvoiceUpload(
       return { error: 'Failed to save invoice to the database.' };
     }
 
-    const newInvoice: Invoice = {
-      id: insertResult.insertedId.toHexString(),
-      userId: userIdString,
-      fileName: file.name,
-      vendor: extractedData.vendor,
-      date: dbDate,
-      total: extractedData.total,
-      lineItems: extractedData.lineItems as LineItem[],
-      summary: summarizedData.summary,
-      summaryEmbedding: summaryEmbedding,
-      categories: categories,
-      isLikelyRecurring: recurrenceInfo.isLikelyRecurring,
-      recurrenceReasoning: recurrenceInfo.reasoning,
-      uploadedAt: invoiceDocumentForDb.uploadedAt.toISOString(),
-      gcsFileUri: gcsFileUri,
-      isDeleted: false,
-    };
+    const newInvoice: Invoice = mapDocumentToInvoice({
+        _id: insertResult.insertedId,
+        ...invoiceDocumentForDb
+    });
+    
 
     return {
       invoice: newInvoice,
@@ -355,6 +387,10 @@ export async function handleInvoiceUpload(
   } catch (error: any) {
     console.error('--- DETAILED ERROR DURING INVOICE UPLOAD ---');
     console.error('Timestamp:', new Date().toISOString());
+    console.error('File Name:', file?.name);
+    console.error('File Type:', file?.type);
+    console.error('File Size:', file?.size);
+    console.error('User ID String:', userIdString);
     console.error('Raw error object:', error);
     if (error && typeof error === 'object') {
       console.error('Error Type/Name:', error.name || (error.constructor && error.constructor.name) || 'N/A');
@@ -378,7 +414,9 @@ export async function handleInvoiceUpload(
     } else if (error?.message && String(error.message).startsWith('GCS Upload Error')) {
       userFriendlyMessage = 'Failed to store the invoice file. Please try again. If the problem continues, check storage configuration.';
     } else if (error?.message && (String(error.message).includes('extractInvoiceDataFlow') || String(error.message).includes('summarizeInvoiceFlow'))) {
-        userFriendlyMessage = `AI processing failed. This could be due to issues with the document content or AI service availability.`;
+        userFriendlyMessage = `AI processing failed. This could be due to issues with the document content or AI service availability. Please try again.`;
+    } else if (error?.message && String(error.message).includes('extractInvoiceData failed') || String(error.message).includes('summarizeInvoice failed') ){
+        userFriendlyMessage = `AI processing failed: ${error.message}. Please check the document quality or try again.`;
     }
     
     return { error: userFriendlyMessage };
@@ -408,6 +446,22 @@ export async function handleManualInvoiceEntry(
     isMonthlyRecurring: formData.get('isMonthlyRecurring') === 'true',
     categoriesString: formData.get('categoriesString') as string | null,
   };
+
+  if (!rawFormData.userId) {
+    return { error: 'User ID is missing. Cannot process manual invoice.' };
+  }
+  let userObjectId: ObjectId;
+  try {
+    userObjectId = new ObjectId(rawFormData.userId);
+  } catch (e: any) {
+    console.error('--- DETAILED ERROR: Invalid User ID for BSON ObjectId in handleManualInvoiceEntry ---');
+    console.error('Timestamp:', new Date().toISOString());
+    console.error('Provided userIdString:', rawFormData.userId);
+    console.error('Raw error object:', e);
+    console.error('--- END OF DETAILED ERROR ---');
+    return { error: 'Invalid User ID format.' };
+  }
+
 
   let i = 0;
   while (formData.has(`lineItems[${i}].description`)) {
@@ -505,17 +559,10 @@ export async function handleManualInvoiceEntry(
     }
     
     const fileName = `Manual - ${vendor} - ${dbDate}.json`; 
-    let userObjectId: ObjectId;
-    try {
-        userObjectId = new ObjectId(userId);
-    } catch (e: any) {
-        console.error('--- DETAILED ERROR: Invalid User ID for BSON ObjectId in handleManualInvoiceEntry ---', e);
-        return { error: 'Invalid User ID format.' };
-    }
-
+    
     const { db } = await connectToDatabase();
     const invoiceDocumentForDb = {
-      userId: userObjectId,
+      userId: userObjectId, // Use the validated ObjectId
       fileName,
       vendor,
       date: dbDate, 
@@ -550,6 +597,7 @@ export async function handleManualInvoiceEntry(
   } catch (error: any) {
     console.error('--- DETAILED ERROR: Processing manual invoice entry ---');
     console.error('Timestamp:', new Date().toISOString());
+    console.error('Form Data (validated):', JSON.stringify(validatedFields.data, null, 2));
     console.error('Raw error object:', error);
     if (error && typeof error === 'object') {
       console.error('Error Type/Name:', error.name || (error.constructor && error.constructor.name) || 'N/A');
@@ -589,9 +637,27 @@ export async function handleUpdateInvoice(
     categoriesString: formData.get('categoriesString') as string | null,
   };
 
+  if (!rawFormData.userId) return { error: 'User ID is missing.' };
+  if (!rawFormData.invoiceId) return { error: 'Invoice ID is missing.' };
   if (invoiceIdToUpdate !== rawFormData.invoiceId) {
     return { error: "Invoice ID mismatch. Update cannot proceed." };
   }
+  
+  let userObjectId: ObjectId;
+  let mongoInvoiceId: ObjectId;
+  try {
+      userObjectId = new ObjectId(rawFormData.userId);
+      mongoInvoiceId = new ObjectId(invoiceIdToUpdate);
+  } catch (e: any) {
+      console.error('--- DETAILED ERROR: Invalid ID for BSON ObjectId in handleUpdateInvoice ---');
+      console.error('Timestamp:', new Date().toISOString());
+      console.error('Provided userIdString:', rawFormData.userId);
+      console.error('Provided invoiceIdToUpdate:', invoiceIdToUpdate);
+      console.error('Raw error object:', e);
+      console.error('--- END OF DETAILED ERROR ---');
+      return { error: 'Invalid User or Invoice ID format.' };
+  }
+
 
   let i = 0;
   while (formData.has(`lineItems[${i}].description`)) {
@@ -631,17 +697,7 @@ export async function handleUpdateInvoice(
 
   try {
     const { db } = await connectToDatabase();
-    let userObjectId: ObjectId;
-    let mongoInvoiceId: ObjectId;
-    try {
-        userObjectId = new ObjectId(userId);
-        mongoInvoiceId = new ObjectId(invoiceIdToUpdate);
-    } catch (e: any) {
-        console.error('--- DETAILED ERROR: Invalid ID for BSON ObjectId in handleUpdateInvoice ---', e);
-        return { error: 'Invalid User or Invoice ID format.' };
-    }
-
-
+    
     const existingInvoice = await db.collection(INVOICES_COLLECTION).findOne({ _id: mongoInvoiceId, userId: userObjectId });
     if (!existingInvoice) {
       return { error: "Invoice not found or user not authorized to update." };
@@ -695,6 +751,8 @@ export async function handleUpdateInvoice(
   } catch (error: any) {
     console.error('--- DETAILED ERROR: Updating invoice ---');
     console.error('Timestamp:', new Date().toISOString());
+    console.error('Invoice ID:', invoiceIdToUpdate);
+    console.error('Form Data (validated):', JSON.stringify(validatedFields.data, null, 2));
     console.error('Raw error object:', error);
     if (error && typeof error === 'object') {
       console.error('Error Type/Name:', error.name || (error.constructor && error.constructor.name) || 'N/A');
@@ -721,7 +779,11 @@ export async function fetchUserInvoices(userId: string): Promise<FetchInvoicesRe
   try {
     userObjectId = new ObjectId(userId);
   } catch (e: any) {
-    console.error('--- DETAILED ERROR: Invalid User ID for BSON ObjectId in fetchUserInvoices ---', e);
+    console.error('--- DETAILED ERROR: Invalid User ID for BSON ObjectId in fetchUserInvoices ---');
+    console.error('Timestamp:', new Date().toISOString());
+    console.error('Provided userIdString:', userId);
+    console.error('Raw error object:', e);
+    console.error('--- END OF DETAILED ERROR ---');
     return { error: 'Invalid User ID format provided.' };
   }
 
@@ -770,7 +832,12 @@ export async function softDeleteInvoice(invoiceId: string, userId: string): Prom
     userObjectId = new ObjectId(userId);
     invoiceObjectId = new ObjectId(invoiceId);
   } catch (e: any) {
-    console.error('--- DETAILED ERROR: Invalid ID for BSON ObjectId in softDeleteInvoice ---', e);
+    console.error('--- DETAILED ERROR: Invalid ID for BSON ObjectId in softDeleteInvoice ---');
+    console.error('Timestamp:', new Date().toISOString());
+    console.error('Provided userIdString:', userId);
+    console.error('Provided invoiceIdString:', invoiceId);
+    console.error('Raw error object:', e);
+    console.error('--- END OF DETAILED ERROR ---');
     return { error: 'Invalid User or Invoice ID format.' };
   }
 
@@ -823,7 +890,12 @@ export async function fetchInvoiceById(invoiceId: string, userId: string): Promi
     userObjectId = new ObjectId(userId);
     currentInvoiceObjectId = new ObjectId(invoiceId);
   } catch (e: any) {
-    console.error('--- DETAILED ERROR: Invalid ID for BSON ObjectId in fetchInvoiceById ---', e);
+    console.error('--- DETAILED ERROR: Invalid ID for BSON ObjectId in fetchInvoiceById ---');
+    console.error('Timestamp:', new Date().toISOString());
+    console.error('Provided userIdString:', userId);
+    console.error('Provided invoiceIdString:', invoiceId);
+    console.error('Raw error object:', e);
+    console.error('--- END OF DETAILED ERROR ---');
     return { error: 'Invalid User or Invoice ID format.' };
   }
 
@@ -868,7 +940,11 @@ export async function searchInvoices(userId: string, searchText: string): Promis
   try {
     userObjectId = new ObjectId(userId);
   } catch (e: any) {
-    console.error('--- DETAILED ERROR: Invalid User ID for BSON ObjectId in searchInvoices ---', e);
+    console.error('--- DETAILED ERROR: Invalid User ID for BSON ObjectId in searchInvoices ---');
+    console.error('Timestamp:', new Date().toISOString());
+    console.error('Provided userIdString:', userId);
+    console.error('Raw error object:', e);
+    console.error('--- END OF DETAILED ERROR ---');
     return { error: 'Invalid User ID format.' };
   }
 
@@ -953,7 +1029,12 @@ export async function findSimilarInvoices(currentInvoiceId: string, userId: stri
     currentInvoiceObjectId = new ObjectId(currentInvoiceId);
     userObjectId = new ObjectId(userId);
   } catch (e: any) {
-    console.error('--- DETAILED ERROR: Invalid ID for BSON ObjectId in findSimilarInvoices ---', e);
+    console.error('--- DETAILED ERROR: Invalid ID for BSON ObjectId in findSimilarInvoices ---');
+    console.error('Timestamp:', new Date().toISOString());
+    console.error('Provided currentInvoiceIdString:', currentInvoiceId);
+    console.error('Provided userIdString:', userId);
+    console.error('Raw error object:', e);
+    console.error('--- END OF DETAILED ERROR ---');
     return { error: 'Invalid Invoice ID or User ID format.' };
   }
 
@@ -1039,7 +1120,11 @@ export async function fetchSpendingDistribution(userId: string): Promise<FetchSp
   try {
     userObjectId = new ObjectId(userId);
   } catch (e: any) {
-     console.error('--- DETAILED ERROR: Invalid User ID for BSON ObjectId in fetchSpendingDistribution ---', e);
+     console.error('--- DETAILED ERROR: Invalid User ID for BSON ObjectId in fetchSpendingDistribution ---');
+     console.error('Timestamp:', new Date().toISOString());
+     console.error('Provided userIdString:', userId);
+     console.error('Raw error object:', e);
+     console.error('--- END OF DETAILED ERROR ---');
     return { error: 'Invalid User ID format.' };
   }
 
@@ -1090,7 +1175,12 @@ export async function toggleInvoiceRecurrence(invoiceId: string, userId: string)
         userObjectId = new ObjectId(userId);
         currentInvoiceObjectId = new ObjectId(invoiceId);
     } catch (e: any) {
-        console.error('--- DETAILED ERROR: Invalid ID for BSON ObjectId in toggleInvoiceRecurrence ---', e);
+        console.error('--- DETAILED ERROR: Invalid ID for BSON ObjectId in toggleInvoiceRecurrence ---');
+        console.error('Timestamp:', new Date().toISOString());
+        console.error('Provided userIdString:', userId);
+        console.error('Provided invoiceIdString:', invoiceId);
+        console.error('Raw error object:', e);
+        console.error('--- END OF DETAILED ERROR ---');
         return { error: 'Invalid Invoice ID or User ID format.' };
     }
 
@@ -1150,7 +1240,11 @@ export async function fetchInvoicesByMonth(userId: string, year: number, month: 
   try {
     userObjectId = new ObjectId(userId);
   } catch (e: any) {
-    console.error('--- DETAILED ERROR: Invalid User ID for BSON ObjectId in fetchInvoicesByMonth ---', e);
+    console.error('--- DETAILED ERROR: Invalid User ID for BSON ObjectId in fetchInvoicesByMonth ---');
+    console.error('Timestamp:', new Date().toISOString());
+    console.error('Provided userIdString:', userId);
+    console.error('Raw error object:', e);
+    console.error('--- END OF DETAILED ERROR ---');
     return { error: 'Invalid User ID format.' };
   }
 
@@ -1186,3 +1280,4 @@ export async function fetchInvoicesByMonth(userId: string, year: number, month: 
     return { error: 'An unexpected error occurred while fetching monthly invoices. Please try again.' };
   }
 }
+
