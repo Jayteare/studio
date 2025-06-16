@@ -547,24 +547,20 @@ export async function handleUpdateInvoice(
     if (!existingInvoice) {
       return { error: "Invoice not found or user not authorized to update." };
     }
-
-    // Categories are taken directly from user input
+    
     const updatedCategories = (categoriesString || '')
         .split(',')
         .map(s => s.trim())
         .filter(s => s.length > 0);
 
-    // Recurrence is taken directly from user input
     const updatedIsLikelyRecurring = isMonthlyRecurring;
     const updatedRecurrenceReasoning = isMonthlyRecurring 
         ? "User marked as monthly recurring." 
         : "User marked as not monthly recurring.";
     
-    // Retain original fileName for uploaded invoices, update for manual entries if vendor/date changed.
-    // Summary and SummaryEmbedding are NOT updated during edit.
     const fileName = existingInvoice.gcsFileUri ? existingInvoice.fileName : `Manual - ${vendor} - ${new Date(date).toISOString().split('T')[0]}.json`;
 
-    const updateData: Partial<Invoice> & { vendor: string; date: string; total: number; lineItems: LineItem[] } = {
+    const updateData: Partial<Invoice> & { vendor: string; date: string; total: number; lineItems: LineItem[]; categories: string[]; isLikelyRecurring: boolean; recurrenceReasoning: string; fileName: string; } = {
       vendor,
       date,
       total,
@@ -584,14 +580,6 @@ export async function handleUpdateInvoice(
     if (updateResult.matchedCount === 0) {
       return { error: 'Invoice not found or user not authorized to update.' };
     }
-    if (updateResult.modifiedCount === 0 && updateResult.matchedCount === 1) {
-       // Fetch the document again to ensure correct mapping, even if no fields were technically "modified"
-       // according to MongoDB (e.g. if setting an array to an identical array).
-       const currentDoc = await db.collection(INVOICES_COLLECTION).findOne({ _id: mongoInvoiceId });
-       if (!currentDoc) return { error: "Failed to retrieve invoice details after attempted update."};
-       const unchangedInvoice = mapDocumentToInvoice(currentDoc);
-       return { invoice: unchangedInvoice, message: 'Invoice details are already up to date or no effective change was made.' };
-    }
 
     const updatedDoc = await db.collection(INVOICES_COLLECTION).findOne({ _id: mongoInvoiceId });
     if (!updatedDoc) {
@@ -599,7 +587,11 @@ export async function handleUpdateInvoice(
     }
     const updatedInvoice = mapDocumentToInvoice(updatedDoc);
 
-    return { invoice: updatedInvoice, message: `Successfully updated invoice for ${vendor}.` };
+    const successMessage = updateResult.modifiedCount > 0
+        ? `Successfully updated invoice for ${vendor}.`
+        : `Invoice for ${vendor} updated. Fields are now as submitted.`;
+
+    return { invoice: updatedInvoice, message: successMessage };
 
   } catch (error: any) {
     console.error('Error updating invoice:', error);
@@ -1115,5 +1107,6 @@ export async function toggleInvoiceRecurrence(invoiceId: string, userId: string)
         return { error: errorMessage };
     }
 }
+
 
 
