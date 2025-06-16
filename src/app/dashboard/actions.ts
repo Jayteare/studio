@@ -211,8 +211,12 @@ export async function handleInvoiceUpload(
   let userObjectId: ObjectId;
   try {
     userObjectId = new ObjectId(userIdString);
-  } catch (e) {
-    console.error('Invalid User ID format for BSON ObjectId:', userIdString, e);
+  } catch (e: any) {
+    console.error('--- DETAILED ERROR: Invalid User ID for BSON ObjectId ---');
+    console.error('Timestamp:', new Date().toISOString());
+    console.error('Provided userIdString:', userIdString);
+    console.error('Raw error object:', e);
+    console.error('--- END OF DETAILED ERROR ---');
     return { error: 'Invalid User ID format. Please ensure you are logged in correctly.' };
   }
 
@@ -299,7 +303,7 @@ export async function handleInvoiceUpload(
 
     const { db } = await connectToDatabase();
     const invoiceDocumentForDb = {
-      userId: userObjectId, // Use the validated ObjectId
+      userId: userObjectId, 
       fileName: file.name,
       vendor: extractedData.vendor,
       date: dbDate, 
@@ -354,38 +358,27 @@ export async function handleInvoiceUpload(
     console.error('Raw error object:', error);
     if (error && typeof error === 'object') {
       console.error('Error Type/Name:', error.name || (error.constructor && error.constructor.name) || 'N/A');
-      console.error('Error Message:', error.message || 'N/A');
-      if (error.stack) {
-        console.error('Error Stack:', error.stack);
-      }
-      if (error.code) { 
-        console.error('Error Code:', error.code);
-      }
-      if (error.details) { 
-        console.error('Error Details:', JSON.stringify(error.details, null, 2));
-      }
+      console.error('Error Message:', String(error.message) || 'N/A');
+      if (error.stack) console.error('Error Stack:', error.stack);
+      if (error.code) console.error('Error Code:', error.code);
+      if (error.details) console.error('Error Details:', JSON.stringify(error.details, null, 2));
     }
     console.error('--- END OF DETAILED ERROR ---');
 
     let userFriendlyMessage = 'An unexpected error occurred while processing your invoice. Please try again later or contact support if the issue persists.';
 
-    if (error?.name === 'BSONError' && error?.message?.includes('input must be a 24 character hex string')) {
+    if (error?.name === 'BSONError' || (error?.message && String(error.message).includes('input must be a 24 character hex string'))) {
       userFriendlyMessage = 'There was an issue validating your user session. Please try logging out and logging back in.';
-    } else if (error?.message?.includes('Deadline exceeded') || error?.message?.includes('unavailable') || (error?.code && (error.code === 'UNAVAILABLE' || error.code === 503 || error.code === 14))) { // 14 is gRPC code for UNAVAILABLE
+    } else if (error?.message && (String(error.message).includes('Deadline exceeded') || String(error.message).includes('unavailable') || (error?.code && (error.code === 'UNAVAILABLE' || error.code === 503 || error.code === 14)))) {
       userFriendlyMessage = 'The AI service is currently experiencing high load or is temporarily unavailable. Please try again in a few minutes.';
-    } else if (error?.message?.includes('Invalid media type') || error?.message?.includes('Unsupported input content type')) {
+    } else if (error?.message && (String(error.message).includes('Invalid media type') || String(error.message).includes('Unsupported input content type'))) {
       userFriendlyMessage = "The AI service could not process the file's format. Please ensure it's a clear PDF, JPG, PNG, or WEBP image.";
-    } else if (error?.message?.includes('unparsable') || error?.message?.includes('malformed')) {
+    } else if (error?.message && (String(error.message).includes('unparsable') || String(error.message).includes('malformed'))) {
       userFriendlyMessage = 'The uploaded file appears to be corrupted or unreadable. Please try a different file.';
-    } else if (error?.message?.startsWith('GCS Upload Error')) {
+    } else if (error?.message && String(error.message).startsWith('GCS Upload Error')) {
       userFriendlyMessage = 'Failed to store the invoice file. Please try again. If the problem continues, check storage configuration.';
-    } else if (error?.message?.includes('extractInvoiceDataFlow') || error?.message?.includes('summarizeInvoiceFlow')) {
-        // Catch specific errors from AI flows if they were not caught by more general checks
-        userFriendlyMessage = `AI processing failed: ${error.message}`;
-    } else if (error instanceof Error && error.message) {
-        if (error.message.length < 200 && !/[{}[\]<>]/.test(error.message)) {
-            userFriendlyMessage = error.message;
-        }
+    } else if (error?.message && (String(error.message).includes('extractInvoiceDataFlow') || String(error.message).includes('summarizeInvoiceFlow'))) {
+        userFriendlyMessage = `AI processing failed. This could be due to issues with the document content or AI service availability.`;
     }
     
     return { error: userFriendlyMessage };
@@ -428,7 +421,7 @@ export async function handleManualInvoiceEntry(
   const validatedFields = ManualInvoiceEntrySchema.safeParse({
     userId: rawFormData.userId,
     vendor: rawFormData.vendor,
-    date: rawFormData.date, // rawFormData.date is already 'yyyy-MM-dd' from client
+    date: rawFormData.date, 
     total: parseFloat(rawFormData.total), 
     lineItems: rawFormData.lineItems.map(li => ({
         description: li.description,
@@ -454,7 +447,7 @@ export async function handleManualInvoiceEntry(
   }
 
   const { userId, vendor, date, total, lineItems, isMonthlyRecurring, categoriesString } = validatedFields.data;
-  const dbDate = standardizeDateString(date); // Standardize date
+  const dbDate = standardizeDateString(date); 
   let finalCategories: string[] = [];
 
   const userProvidedCategories = (categoriesString || '').split(',').map(s => s.trim()).filter(s => s.length > 0);
@@ -512,10 +505,17 @@ export async function handleManualInvoiceEntry(
     }
     
     const fileName = `Manual - ${vendor} - ${dbDate}.json`; 
+    let userObjectId: ObjectId;
+    try {
+        userObjectId = new ObjectId(userId);
+    } catch (e: any) {
+        console.error('--- DETAILED ERROR: Invalid User ID for BSON ObjectId in handleManualInvoiceEntry ---', e);
+        return { error: 'Invalid User ID format.' };
+    }
 
     const { db } = await connectToDatabase();
     const invoiceDocumentForDb = {
-      userId: new ObjectId(userId),
+      userId: userObjectId,
       fileName,
       vendor,
       date: dbDate, 
@@ -548,11 +548,21 @@ export async function handleManualInvoiceEntry(
     };
 
   } catch (error: any) {
-    console.error('Error processing manual invoice entry:', error);
-    let errorMessage = 'An unexpected error occurred while processing the manual invoice.';
-    if (error instanceof Error) errorMessage = error.message;
-    else if (typeof error === 'string') errorMessage = error;
-    return { error: errorMessage };
+    console.error('--- DETAILED ERROR: Processing manual invoice entry ---');
+    console.error('Timestamp:', new Date().toISOString());
+    console.error('Raw error object:', error);
+    if (error && typeof error === 'object') {
+      console.error('Error Type/Name:', error.name || (error.constructor && error.constructor.name) || 'N/A');
+      console.error('Error Message:', String(error.message) || 'N/A');
+      if (error.stack) console.error('Error Stack:', error.stack);
+    }
+    console.error('--- END OF DETAILED ERROR ---');
+    
+    let userFriendlyMessage = 'An unexpected error occurred while processing the manual invoice. Please try again.';
+     if (error?.message && (String(error.message).includes('Deadline exceeded') || String(error.message).includes('unavailable'))) {
+      userFriendlyMessage = 'The AI service is currently busy or unavailable. Please try again in a few minutes.';
+    }
+    return { error: userFriendlyMessage };
   }
 }
 
@@ -596,7 +606,7 @@ export async function handleUpdateInvoice(
     userId: rawFormData.userId,
     invoiceId: rawFormData.invoiceId,
     vendor: rawFormData.vendor,
-    date: rawFormData.date, // date is 'yyyy-MM-dd' from client
+    date: rawFormData.date, 
     total: parseFloat(rawFormData.total),
     lineItems: rawFormData.lineItems.map(li => ({
       description: li.description,
@@ -617,12 +627,20 @@ export async function handleUpdateInvoice(
   }
 
   const { userId, vendor, date, total, lineItems, isMonthlyRecurring, categoriesString } = validatedFields.data;
-  const dbDate = standardizeDateString(date); // Standardize date
+  const dbDate = standardizeDateString(date); 
 
   try {
     const { db } = await connectToDatabase();
-    const userObjectId = new ObjectId(userId);
-    const mongoInvoiceId = new ObjectId(invoiceIdToUpdate);
+    let userObjectId: ObjectId;
+    let mongoInvoiceId: ObjectId;
+    try {
+        userObjectId = new ObjectId(userId);
+        mongoInvoiceId = new ObjectId(invoiceIdToUpdate);
+    } catch (e: any) {
+        console.error('--- DETAILED ERROR: Invalid ID for BSON ObjectId in handleUpdateInvoice ---', e);
+        return { error: 'Invalid User or Invoice ID format.' };
+    }
+
 
     const existingInvoice = await db.collection(INVOICES_COLLECTION).findOne({ _id: mongoInvoiceId, userId: userObjectId });
     if (!existingInvoice) {
@@ -637,7 +655,7 @@ export async function handleUpdateInvoice(
     const updatedIsLikelyRecurring = isMonthlyRecurring;
     const updatedRecurrenceReasoning = isMonthlyRecurring 
         ? "User marked as monthly recurring." 
-        : `User marked as not monthly recurring on ${formatDateFn(new Date(), 'yyyy-MM-dd')}.`; // Add date for clarity
+        : `User marked as not monthly recurring on ${formatDateFn(new Date(), 'yyyy-MM-dd')}.`; 
     
     const fileName = existingInvoice.gcsFileUri ? existingInvoice.fileName : `Manual - ${vendor} - ${dbDate}.json`; 
 
@@ -675,11 +693,17 @@ export async function handleUpdateInvoice(
     return { invoice: updatedInvoice, message: successMessage };
 
   } catch (error: any) {
-    console.error('Error updating invoice:', error);
-    let errorMessage = 'An unexpected error occurred while updating the invoice.';
-    if (error instanceof Error) errorMessage = error.message;
-    else if (typeof error === 'string') errorMessage = error;
-    return { error: errorMessage };
+    console.error('--- DETAILED ERROR: Updating invoice ---');
+    console.error('Timestamp:', new Date().toISOString());
+    console.error('Raw error object:', error);
+    if (error && typeof error === 'object') {
+      console.error('Error Type/Name:', error.name || (error.constructor && error.constructor.name) || 'N/A');
+      console.error('Error Message:', String(error.message) || 'N/A');
+      if (error.stack) console.error('Error Stack:', error.stack);
+    }
+    console.error('--- END OF DETAILED ERROR ---');
+    
+    return { error: 'An unexpected error occurred while updating the invoice. Please try again.' };
   }
 }
 
@@ -693,17 +717,16 @@ export async function fetchUserInvoices(userId: string): Promise<FetchInvoicesRe
   if (!userId) {
     return { error: 'User ID is required to fetch invoices.' };
   }
+  let userObjectId: ObjectId;
+  try {
+    userObjectId = new ObjectId(userId);
+  } catch (e: any) {
+    console.error('--- DETAILED ERROR: Invalid User ID for BSON ObjectId in fetchUserInvoices ---', e);
+    return { error: 'Invalid User ID format provided.' };
+  }
 
   try {
     const { db } = await connectToDatabase();
-    let userObjectId;
-    try {
-      userObjectId = new ObjectId(userId);
-    } catch (e) {
-      console.error('Error creating ObjectId from userId in fetchUserInvoices:', userId, e);
-      return { error: 'Invalid User ID format provided.' };
-    }
-
     const invoiceDocuments = await db
       .collection(INVOICES_COLLECTION)
       .find({
@@ -716,20 +739,18 @@ export async function fetchUserInvoices(userId: string): Promise<FetchInvoicesRe
     const invoices: Invoice[] = invoiceDocuments.map(mapDocumentToInvoice);
     return { invoices };
 
-  } catch (error: any) {
-    console.error('Error fetching invoices:', error);
-    let errorMessage = 'An unexpected error occurred while fetching invoices.';
-     if (error instanceof Error) {
-      errorMessage = `Failed to fetch invoices: ${error.message}`;
-      if (error.name === 'BSONError' && error.message.includes('input must be a 24 character hex string')) {
-        errorMessage = 'Invalid User ID format for fetching invoices.';
-      }
-    } else if (typeof error === 'string') {
-      errorMessage = `Failed to fetch invoices: ${error}`;
-    } else if (error && typeof error.toString === 'function') {
-        errorMessage = `Failed to fetch invoices: ${error.toString()}`;
+  } catch (error: any)
+   {
+    console.error('--- DETAILED ERROR: Fetching user invoices ---');
+    console.error('Timestamp:', new Date().toISOString());
+    console.error('User ID:', userId);
+    console.error('Raw error object:', error);
+    if (error && typeof error === 'object') {
+      console.error('Error Type/Name:', error.name || (error.constructor && error.constructor.name) || 'N/A');
+      console.error('Error Message:', String(error.message) || 'N/A');
     }
-    return { error: errorMessage };
+    console.error('--- END OF DETAILED ERROR ---');
+    return { error: 'An unexpected error occurred while fetching your invoices. Please try again.' };
   }
 }
 
@@ -740,18 +761,21 @@ export interface SoftDeleteResponse {
 }
 
 export async function softDeleteInvoice(invoiceId: string, userId: string): Promise<SoftDeleteResponse> {
-  if (!userId) {
-    return { error: 'User ID is required to delete an invoice.' };
-  }
-  if (!invoiceId) {
-    return { error: 'Invoice ID is required to delete an invoice.' };
+  if (!userId) return { error: 'User ID is required to delete an invoice.' };
+  if (!invoiceId) return { error: 'Invoice ID is required to delete an invoice.' };
+
+  let userObjectId: ObjectId;
+  let invoiceObjectId: ObjectId;
+  try {
+    userObjectId = new ObjectId(userId);
+    invoiceObjectId = new ObjectId(invoiceId);
+  } catch (e: any) {
+    console.error('--- DETAILED ERROR: Invalid ID for BSON ObjectId in softDeleteInvoice ---', e);
+    return { error: 'Invalid User or Invoice ID format.' };
   }
 
   try {
     const { db } = await connectToDatabase();
-    const userObjectId = new ObjectId(userId);
-    const invoiceObjectId = new ObjectId(invoiceId);
-
     const result = await db.collection(INVOICES_COLLECTION).updateOne(
       { _id: invoiceObjectId, userId: userObjectId },
       { $set: { isDeleted: true, deletedAt: new Date() } }
@@ -770,19 +794,16 @@ export async function softDeleteInvoice(invoiceId: string, userId: string): Prom
 
     return { success: true, deletedInvoiceId: invoiceId };
   } catch (error: any) {
-    console.error('Error soft deleting invoice:', error);
-    let errorMessage = 'An unexpected error occurred while deleting the invoice.';
-    if (error instanceof Error) {
-      errorMessage = `Failed to delete invoice: ${error.message}`;
-      if (error.name === 'BSONError') {
-        errorMessage = 'Invalid ID format for invoice or user during delete.';
-      }
-    } else if (typeof error === 'string') {
-      errorMessage = `Failed to delete invoice: ${error}`;
-    } else if (error && typeof error.toString === 'function') {
-        errorMessage = `Failed to delete invoice: ${error.toString()}`;
+    console.error('--- DETAILED ERROR: Soft deleting invoice ---');
+    console.error('Timestamp:', new Date().toISOString());
+    console.error('Invoice ID:', invoiceId, 'User ID:', userId);
+    console.error('Raw error object:', error);
+    if (error && typeof error === 'object') {
+      console.error('Error Type/Name:', error.name || (error.constructor && error.constructor.name) || 'N/A');
+      console.error('Error Message:', String(error.message) || 'N/A');
     }
-    return { error: errorMessage };
+    console.error('--- END OF DETAILED ERROR ---');
+    return { error: 'An unexpected error occurred while deleting the invoice. Please try again.' };
   }
 }
 
@@ -793,28 +814,23 @@ export interface FetchInvoiceByIdResponse {
 }
 
 export async function fetchInvoiceById(invoiceId: string, userId: string): Promise<FetchInvoiceByIdResponse> {
-  if (!userId) {
-    return { error: 'User ID is required to fetch an invoice.' };
-  }
-  if (!invoiceId) {
-    return { error: 'Invoice ID is required to fetch an invoice.' };
+  if (!userId) return { error: 'User ID is required.' };
+  if (!invoiceId) return { error: 'Invoice ID is required.' };
+
+  let userObjectId: ObjectId;
+  let currentInvoiceObjectId: ObjectId;
+  try {
+    userObjectId = new ObjectId(userId);
+    currentInvoiceObjectId = new ObjectId(invoiceId);
+  } catch (e: any) {
+    console.error('--- DETAILED ERROR: Invalid ID for BSON ObjectId in fetchInvoiceById ---', e);
+    return { error: 'Invalid User or Invoice ID format.' };
   }
 
   try {
     const { db } = await connectToDatabase();
-    let userObjectId;
-    let invoiceObjectId;
-
-    try {
-      userObjectId = new ObjectId(userId);
-      invoiceObjectId = new ObjectId(invoiceId);
-    } catch (e) {
-      console.error('Error creating ObjectId in fetchInvoiceById:', e);
-      return { error: 'Invalid User ID or Invoice ID format provided.' };
-    }
-
     const doc = await db.collection(INVOICES_COLLECTION).findOne({
-      _id: invoiceObjectId,
+      _id: currentInvoiceObjectId,
       userId: userObjectId,
       isDeleted: { $ne: true }
     });
@@ -827,19 +843,16 @@ export async function fetchInvoiceById(invoiceId: string, userId: string): Promi
     return { invoice };
 
   } catch (error: any) {
-    console.error(`Error fetching invoice by ID (${invoiceId}):`, error);
-    let errorMessage = 'An unexpected error occurred while fetching the invoice details.';
-    if (error instanceof Error) {
-      errorMessage = `Failed to fetch invoice details: ${error.message}`;
-      if (error.name === 'BSONError') {
-        errorMessage = 'Invalid ID format for fetching the invoice.';
-      }
-    } else if (typeof error === 'string') {
-      errorMessage = `Failed to fetch invoice details: ${error}`;
-    } else if (error && typeof error.toString === 'function') {
-        errorMessage = `Failed to fetch invoice details: ${error.toString()}`;
+    console.error(`--- DETAILED ERROR: Fetching invoice by ID (${invoiceId}) ---`);
+    console.error('Timestamp:', new Date().toISOString());
+    console.error('User ID:', userId);
+    console.error('Raw error object:', error);
+    if (error && typeof error === 'object') {
+      console.error('Error Type/Name:', error.name || (error.constructor && error.constructor.name) || 'N/A');
+      console.error('Error Message:', String(error.message) || 'N/A');
     }
-    return { error: errorMessage };
+    console.error('--- END OF DETAILED ERROR ---');
+    return { error: 'An unexpected error occurred while fetching invoice details. Please try again.' };
   }
 }
 
@@ -849,28 +862,27 @@ export interface SearchInvoicesResponse {
 }
 
 export async function searchInvoices(userId: string, searchText: string): Promise<SearchInvoicesResponse> {
-  console.error('Raw error object during searchInvoices:', "searchInvoices called"); 
-  if (!userId) {
-    return { error: 'User ID is required to search invoices.' };
+  if (!userId) return { error: 'User ID is required to search invoices.' };
+  
+  let userObjectId: ObjectId;
+  try {
+    userObjectId = new ObjectId(userId);
+  } catch (e: any) {
+    console.error('--- DETAILED ERROR: Invalid User ID for BSON ObjectId in searchInvoices ---', e);
+    return { error: 'Invalid User ID format.' };
   }
+
   if (!searchText || searchText.trim() === '') {
-    return fetchUserInvoices(userId);
+    return fetchUserInvoices(userId); // Re-fetch all if search is empty
   }
 
   try {
     const { db } = await connectToDatabase();
-    let userObjectId;
-    try {
-      userObjectId = new ObjectId(userId);
-    } catch (e) {
-      return { error: 'Invalid User ID format.' };
-    }
-
     const queryEmbeddingResponse = await ai.embed({ content: searchText });
     
     if (!queryEmbeddingResponse || !queryEmbeddingResponse.embedding || !Array.isArray(queryEmbeddingResponse.embedding)) {
       console.error('Failed to generate embedding for search query. AI response:', queryEmbeddingResponse);
-      return { error: 'Failed to generate embedding for search query. The AI service might be unavailable or the query is invalid.' };
+      return { error: 'Failed to prepare search query. The AI service might be unavailable or the query is invalid.' };
     }
     const queryVector = queryEmbeddingResponse.embedding;
     
@@ -892,54 +904,37 @@ export async function searchInvoices(userId: string, searchText: string): Promis
     ];
 
     const searchedDocuments = await db.collection(INVOICES_COLLECTION).aggregate(pipeline).toArray();
-    
     const invoices: Invoice[] = searchedDocuments.map(mapDocumentToInvoice);
-    
     return { invoices };
 
   } catch (error: any) {
-    console.error('Raw error object during searchInvoices:', error); 
-
-    let errorMessage = 'An unexpected error occurred during search.'; 
-
-    if (error) { 
-      if (typeof error === 'string') {
-          errorMessage = error;
-      } else if (error.message && typeof error.message === 'string') {
-          errorMessage = error.message;
-          
-          if (errorMessage.toLowerCase().includes('index not found') || errorMessage.toLowerCase().includes(ATLAS_VECTOR_SEARCH_INDEX_NAME.toLowerCase())) {
-              errorMessage = `The required vector search index "${ATLAS_VECTOR_SEARCH_INDEX_NAME}" may not exist or is not configured correctly. Please also ensure that documents have the 'summaryEmbedding' field and it's an array of numbers.`;
-          } else if (errorMessage.toLowerCase().includes('queryvector parameter must be an array of numbers')) {
-              errorMessage = 'The generated query for search was invalid. Please try rephrasing your search.';
-          } else if (errorMessage.toLowerCase().includes('summaryembedding field must be an array type')) {
-              errorMessage = `One or more invoices has an invalid 'summaryEmbedding'. It should be an array of numbers. Check your data or re-upload affected invoices. Index name: ${ATLAS_VECTOR_SEARCH_INDEX_NAME}`;
-          }
-      } else if (error.toString && typeof error.toString === 'function') {
-          errorMessage = error.toString();
-      }
+    console.error('--- DETAILED ERROR IN searchInvoices ---');
+    console.error('Timestamp:', new Date().toISOString());
+    console.error('Search Text:', searchText);
+    console.error('User ID:', userId);
+    console.error('Raw error object:', error);
+    if (error && typeof error === 'object') {
+      console.error('Error Type/Name:', error.name || (error.constructor && error.constructor.name) || 'N/A');
+      console.error('Error Message:', String(error.message) || 'N/A');
+      if (error.stack) console.error('Error Stack:', error.stack);
+      if (error.code) console.error('Error Code:', error.code);
     }
-    
-    const knownErrorMessages = [
-        `the required vector search index "${ATLAS_VECTOR_SEARCH_INDEX_NAME.toLowerCase()}"`,
-        `the generated query for search was invalid`,
-        `one or more invoices has an invalid 'summaryembedding'`
-    ];
+    console.error('--- END OF DETAILED searchInvoices ERROR ---');
 
-    let isKnownError = false;
-    const lowerErrorMessage = errorMessage.toLowerCase();
-    for (const knownMsg of knownErrorMessages) {
-        if (lowerErrorMessage.includes(knownMsg)) {
-            isKnownError = true;
-            break;
+    let userFriendlyMessage = 'An unexpected error occurred during search. Please try again.';
+    if (error?.message) {
+        const lowerMessage = String(error.message).toLowerCase();
+        if (lowerMessage.includes('index not found') || lowerMessage.includes(ATLAS_VECTOR_SEARCH_INDEX_NAME.toLowerCase())) {
+            userFriendlyMessage = `Search is temporarily unavailable due to a configuration issue. Administrators have been notified.`;
+        } else if (lowerMessage.includes('queryvector parameter must be an array of numbers')) {
+            userFriendlyMessage = 'The search query could not be processed. Please try rephrasing your search.';
+        } else if (lowerMessage.includes('summaryembedding field must be an array type')) {
+            userFriendlyMessage = 'Search encountered data consistency issues. Administrators have been notified.';
+        } else if (lowerMessage.includes('deadline exceeded') || lowerMessage.includes('unavailable')) {
+            userFriendlyMessage = 'The search service is currently busy or unavailable. Please try again in a few moments.';
         }
     }
-
-    if (!isKnownError && !lowerErrorMessage.startsWith('search failed:')) {
-        errorMessage = `Search failed: ${errorMessage}`;
-    }
-    
-    return { error: errorMessage };
+    return { error: userFriendlyMessage };
   }
 }
 
@@ -949,26 +944,21 @@ export interface FindSimilarInvoicesResponse {
 }
 
 export async function findSimilarInvoices(currentInvoiceId: string, userId: string): Promise<FindSimilarInvoicesResponse> {
-  if (!userId) {
-    return { error: 'User ID is required to find similar invoices.' };
-  }
-  if (!currentInvoiceId) {
-    return { error: 'Current Invoice ID is required to find similar invoices.' };
-  }
+  if (!userId) return { error: 'User ID is required.' };
+  if (!currentInvoiceId) return { error: 'Current Invoice ID is required.' };
 
   let currentInvoiceObjectId: ObjectId;
   let userObjectId: ObjectId;
-
   try {
     currentInvoiceObjectId = new ObjectId(currentInvoiceId);
     userObjectId = new ObjectId(userId);
-  } catch (e) {
+  } catch (e: any) {
+    console.error('--- DETAILED ERROR: Invalid ID for BSON ObjectId in findSimilarInvoices ---', e);
     return { error: 'Invalid Invoice ID or User ID format.' };
   }
 
   try {
     const { db } = await connectToDatabase();
-
     const currentInvoiceDoc = await db.collection(INVOICES_COLLECTION).findOne({
       _id: currentInvoiceObjectId,
       userId: userObjectId,
@@ -1001,40 +991,35 @@ export async function findSimilarInvoices(currentInvoiceId: string, userId: stri
           },
         },
       },
-      { 
-        $match: {
-            _id: { $ne: currentInvoiceObjectId }
-        }
-      },
-      { 
-          $limit: 5 
-      }
+      { $match: { _id: { $ne: currentInvoiceObjectId } } },
+      { $limit: 5 }
     ];
 
     const similarDocuments = await db.collection(INVOICES_COLLECTION).aggregate(pipeline).toArray();
     const similarInvoices: Invoice[] = similarDocuments.map(mapDocumentToInvoice);
-    
     return { similarInvoices };
 
   } catch (error: any) {
-    console.error('Raw error object during findSimilarInvoices:', error);
-    let errorMessage = 'An unexpected error occurred while finding similar invoices.';
-    if (error) {
-      if (typeof error === 'string') {
-        errorMessage = error;
-      } else if (error.message && typeof error.message === 'string') {
-        errorMessage = error.message;
-         if (errorMessage.toLowerCase().includes('index not found') || errorMessage.toLowerCase().includes(ATLAS_VECTOR_SEARCH_INDEX_NAME.toLowerCase())) {
-              errorMessage = `The vector search index "${ATLAS_VECTOR_SEARCH_INDEX_NAME}" may be misconfigured or not found for similar invoice search.`;
-          }
-      } else if (error.toString && typeof error.toString === 'function') {
-        errorMessage = error.toString();
-      }
+    console.error('--- DETAILED ERROR IN findSimilarInvoices ---');
+    console.error('Timestamp:', new Date().toISOString());
+    console.error('CurrentInvoiceID:', currentInvoiceId, 'User ID:', userId);
+    console.error('Raw error object:', error);
+    if (error && typeof error === 'object') {
+      console.error('Error Type/Name:', error.name || (error.constructor && error.constructor.name) || 'N/A');
+      console.error('Error Message:', String(error.message) || 'N/A');
     }
-     if (!errorMessage.toLowerCase().startsWith('failed to find similar invoices:')) {
-        errorMessage = `Failed to find similar invoices: ${errorMessage}`;
+    console.error('--- END OF DETAILED findSimilarInvoices ERROR ---');
+
+    let userFriendlyMessage = 'An unexpected error occurred while finding similar invoices. Please try again.';
+     if (error?.message) {
+        const lowerMessage = String(error.message).toLowerCase();
+        if (lowerMessage.includes('index not found') || lowerMessage.includes(ATLAS_VECTOR_SEARCH_INDEX_NAME.toLowerCase())) {
+            userFriendlyMessage = `Similar invoice search is temporarily unavailable due to a configuration issue.`;
+        } else if (lowerMessage.includes('deadline exceeded') || lowerMessage.includes('unavailable')) {
+            userFriendlyMessage = 'The AI service for similarity search is currently busy. Please try again shortly.';
+        }
     }
-    return { error: errorMessage };
+    return { error: userFriendlyMessage };
   }
 }
 
@@ -1049,64 +1034,43 @@ export interface FetchSpendingDistributionResponse {
 }
 
 export async function fetchSpendingDistribution(userId: string): Promise<FetchSpendingDistributionResponse> {
-  if (!userId) {
-    return { error: 'User ID is required to fetch spending distribution.' };
+  if (!userId) return { error: 'User ID is required.' };
+  let userObjectId: ObjectId;
+  try {
+    userObjectId = new ObjectId(userId);
+  } catch (e: any) {
+     console.error('--- DETAILED ERROR: Invalid User ID for BSON ObjectId in fetchSpendingDistribution ---', e);
+    return { error: 'Invalid User ID format.' };
   }
 
   try {
     const { db } = await connectToDatabase();
-    const userObjectId = new ObjectId(userId);
-
     const pipeline = [
-      {
-        $match: {
-          userId: userObjectId,
-          isDeleted: { $ne: true },
-          categories: { $exists: true, $ne: [] } 
-        }
-      },
-      {
-        $unwind: '$categories' 
-      },
-      {
-        $group: {
-          _id: '$categories', 
-          totalSpent: { $sum: '$total' } 
-        }
-      },
-      {
-        $project: {
-          _id: 0, 
-          category: '$_id', 
-          totalSpent: 1
-        }
-      },
-      {
-        $sort: { totalSpent: -1 } 
-      }
+      { $match: { userId: userObjectId, isDeleted: { $ne: true }, categories: { $exists: true, $ne: [] } } },
+      { $unwind: '$categories' },
+      { $group: { _id: '$categories', totalSpent: { $sum: '$total' } } },
+      { $project: { _id: 0, category: '$_id', totalSpent: 1 } },
+      { $sort: { totalSpent: -1 } }
     ];
 
     const result = await db.collection(INVOICES_COLLECTION).aggregate(pipeline).toArray();
-    
     const data: SpendingByCategory[] = result.map(item => ({
         category: item.category as string,
         totalSpent: item.totalSpent as number,
     }));
-
     return { data };
 
   } catch (error: any) {
-    console.error('Error fetching spending distribution:', error);
-    let errorMessage = 'An unexpected error occurred while fetching spending distribution.';
-    if (error instanceof Error) {
-      errorMessage = `Failed to fetch spending distribution: ${error.message}`;
-      if (error.name === 'BSONError') {
-        errorMessage = 'Invalid User ID format for fetching spending distribution.';
-      }
-    } else if (typeof error === 'string') {
-      errorMessage = `Failed to fetch spending distribution: ${error}`;
+    console.error('--- DETAILED ERROR: Fetching spending distribution ---');
+    console.error('Timestamp:', new Date().toISOString());
+    console.error('User ID:', userId);
+    console.error('Raw error object:', error);
+     if (error && typeof error === 'object') {
+      console.error('Error Type/Name:', error.name || (error.constructor && error.constructor.name) || 'N/A');
+      console.error('Error Message:', String(error.message) || 'N/A');
     }
-    return { error: errorMessage };
+    console.error('--- END OF DETAILED ERROR ---');
+    return { error: 'An unexpected error occurred while fetching spending data. Please try again.' };
   }
 }
 
@@ -1117,20 +1081,16 @@ export interface ToggleRecurrenceResponse {
 }
 
 export async function toggleInvoiceRecurrence(invoiceId: string, userId: string): Promise<ToggleRecurrenceResponse> {
-    if (!userId) {
-        return { error: 'User ID is required.' };
-    }
-    if (!invoiceId) {
-        return { error: 'Invoice ID is required.' };
-    }
+    if (!userId) return { error: 'User ID is required.' };
+    if (!invoiceId) return { error: 'Invoice ID is required.' };
 
     let userObjectId: ObjectId;
     let currentInvoiceObjectId: ObjectId;
-
     try {
         userObjectId = new ObjectId(userId);
         currentInvoiceObjectId = new ObjectId(invoiceId);
-    } catch (e) {
+    } catch (e: any) {
+        console.error('--- DETAILED ERROR: Invalid ID for BSON ObjectId in toggleInvoiceRecurrence ---', e);
         return { error: 'Invalid Invoice ID or User ID format.' };
     }
 
@@ -1150,41 +1110,30 @@ export async function toggleInvoiceRecurrence(invoiceId: string, userId: string)
         const newIsLikelyRecurring = !currentIsLikelyRecurring;
         const newReasoning = `Manually set to ${newIsLikelyRecurring ? 'monthly recurring' : 'not monthly recurring'} by user on ${formatDateFn(new Date(), 'yyyy-MM-dd')}.`;
 
-
         const updateResult = await db.collection(INVOICES_COLLECTION).updateOne(
             { _id: currentInvoiceObjectId, userId: userObjectId },
-            {
-                $set: {
-                    isLikelyRecurring: newIsLikelyRecurring,
-                    recurrenceReasoning: newReasoning,
-                },
-            }
+            { $set: { isLikelyRecurring: newIsLikelyRecurring, recurrenceReasoning: newReasoning } }
         );
 
-        if (updateResult.matchedCount === 0) {
-            return { error: 'Invoice not found or user not authorized.' };
-        }
-        if (updateResult.modifiedCount === 0) {
-            const refreshedDoc = await db.collection(INVOICES_COLLECTION).findOne({ _id: currentInvoiceObjectId });
-            if (!refreshedDoc) return { error: "Failed to retrieve invoice details after toggle."};
-            const invoiceToReturn = mapDocumentToInvoice(refreshedDoc);
-            return { invoice: invoiceToReturn };
-        }
+        if (updateResult.matchedCount === 0) return { error: 'Invoice not found or user not authorized.' };
         
         const updatedDoc = await db.collection(INVOICES_COLLECTION).findOne({ _id: currentInvoiceObjectId });
-        if (!updatedDoc) {
-             return { error: 'Failed to retrieve updated invoice details.' };
-        }
+        if (!updatedDoc) return { error: 'Failed to retrieve updated invoice details.' };
+        
         const updatedInvoice = mapDocumentToInvoice(updatedDoc);
         return { invoice: updatedInvoice };
 
     } catch (error: any) {
-        console.error('Error toggling invoice recurrence:', error);
-        let errorMessage = 'An unexpected error occurred while updating recurrence status.';
-        if (error instanceof Error) {
-            errorMessage = `Failed to update recurrence: ${error.message}`;
+        console.error('--- DETAILED ERROR: Toggling invoice recurrence ---');
+        console.error('Timestamp:', new Date().toISOString());
+        console.error('Invoice ID:', invoiceId, 'User ID:', userId);
+        console.error('Raw error object:', error);
+        if (error && typeof error === 'object') {
+            console.error('Error Type/Name:', error.name || (error.constructor && error.constructor.name) || 'N/A');
+            console.error('Error Message:', String(error.message) || 'N/A');
         }
-        return { error: errorMessage };
+        console.error('--- END OF DETAILED ERROR ---');
+        return { error: 'An unexpected error occurred while updating recurrence status. Please try again.' };
     }
 }
 
@@ -1194,33 +1143,29 @@ export interface FetchInvoicesByMonthResponse {
 }
 
 export async function fetchInvoicesByMonth(userId: string, year: number, month: number): Promise<FetchInvoicesByMonthResponse> {
-  if (!userId) {
-    return { error: 'User ID is required.' };
-  }
-  if (!year || !month || month < 1 || month > 12) {
-    return { error: 'Valid year and month (1-12) are required.' };
+  if (!userId) return { error: 'User ID is required.' };
+  if (!year || !month || month < 1 || month > 12) return { error: 'Valid year and month (1-12) are required.'};
+
+  let userObjectId: ObjectId;
+  try {
+    userObjectId = new ObjectId(userId);
+  } catch (e: any) {
+    console.error('--- DETAILED ERROR: Invalid User ID for BSON ObjectId in fetchInvoicesByMonth ---', e);
+    return { error: 'Invalid User ID format.' };
   }
 
   try {
     const { db } = await connectToDatabase();
-    const userObjectId = new ObjectId(userId);
-
     const startDate = new Date(Date.UTC(year, month - 1, 1)); 
-    const endDate = new Date(Date.UTC(year, month, 1)); // Start of next month (exclusive)
-    
-    // Format for string comparison in DB, as dates are stored as YYYY-MM-DD strings
     const startQueryDate = formatDateFn(startDate, 'yyyy-MM-dd');
-    const endQueryDate = formatDateFn(new Date(Date.UTC(year, month, 0)), 'yyyy-MM-dd'); // Last day of current month for $lte
+    const endQueryDate = formatDateFn(new Date(Date.UTC(year, month, 0)), 'yyyy-MM-dd');
 
     const invoiceDocuments = await db
       .collection(INVOICES_COLLECTION)
       .find({
         userId: userObjectId,
         isDeleted: { $ne: true },
-        date: { 
-          $gte: startQueryDate, 
-          $lte: endQueryDate 
-        }
+        date: { $gte: startQueryDate, $lte: endQueryDate }
       })
       .sort({ date: 1, uploadedAt: -1 }) 
       .toArray();
@@ -1229,17 +1174,15 @@ export async function fetchInvoicesByMonth(userId: string, year: number, month: 
     return { invoices };
 
   } catch (error: any) {
-    console.error('Error fetching invoices by month:', error);
-    let errorMessage = 'An unexpected error occurred while fetching monthly invoices.';
-    if (error instanceof Error) {
-      errorMessage = `Failed to fetch monthly invoices: ${error.message}`;
-      if (error.name === 'BSONError') {
-        errorMessage = 'Invalid User ID format for fetching monthly invoices.';
-      }
-    } else if (typeof error === 'string') {
-      errorMessage = `Failed to fetch monthly invoices: ${error}`;
+    console.error('--- DETAILED ERROR: Fetching invoices by month ---');
+    console.error('Timestamp:', new Date().toISOString());
+    console.error('User ID:', userId, 'Year:', year, 'Month:', month);
+    console.error('Raw error object:', error);
+    if (error && typeof error === 'object') {
+      console.error('Error Type/Name:', error.name || (error.constructor && error.constructor.name) || 'N/A');
+      console.error('Error Message:', String(error.message) || 'N/A');
     }
-    return { error: errorMessage };
+    console.error('--- END OF DETAILED ERROR ---');
+    return { error: 'An unexpected error occurred while fetching monthly invoices. Please try again.' };
   }
 }
-
