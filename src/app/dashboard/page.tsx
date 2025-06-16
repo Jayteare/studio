@@ -12,7 +12,7 @@ import type { Invoice } from '@/types/invoice';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Loader2, LogOut, Search, XCircle, PlusCircle, BarChartHorizontalBig } from 'lucide-react';
+import { Loader2, LogOut, Search, XCircle, PlusCircle, BarChartHorizontalBig, CalendarDays } from 'lucide-react';
 import { AppLogo } from '@/components/app-logo';
 import { Separator } from '@/components/ui/separator';
 import { 
@@ -215,7 +215,7 @@ export default function DashboardPage() {
         </header>
 
         <main className="flex-1 container mx-auto max-w-screen-2xl p-4 md:p-8">
-          <section className="mb-12 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 items-stretch">
+          <section className="mb-12 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8 items-stretch">
             <InvoiceUploadForm 
               onInvoiceUploaded={handleNewInvoiceAdded} 
               userId={user.id} 
@@ -250,6 +250,24 @@ export default function DashboardPage() {
                     <Button asChild className="w-full md:w-auto">
                         <Link href="/dashboard/distribution">
                             <BarChartHorizontalBig className="mr-2 h-4 w-4" /> View Spending Distribution
+                        </Link>
+                    </Button>
+                </CardContent>
+            </Card>
+             <Card className="w-full shadow-lg flex flex-col">
+                <CardHeader>
+                    <CardTitle className="font-headline flex items-center gap-2 text-2xl">
+                        <CalendarDays className="h-6 w-6 text-primary" />
+                        Monthly View
+                    </CardTitle>
+                    <CardDescription>
+                        Browse invoices by specific month and year.
+                    </CardDescription>
+                </CardHeader>
+                <CardContent className="flex-grow flex items-center justify-center">
+                    <Button asChild className="w-full md:w-auto">
+                        <Link href="/dashboard/monthly">
+                            <CalendarDays className="mr-2 h-4 w-4" /> View Monthly Invoices
                         </Link>
                     </Button>
                 </CardContent>
@@ -337,3 +355,4 @@ export default function DashboardPage() {
     </>
   );
 }
+

@@ -11,6 +11,7 @@ import { detectRecurrence, type DetectRecurrenceInput, type DetectRecurrenceOutp
 import { ai } from '@/ai/genkit';
 import type { Invoice, LineItem } from '@/types/invoice';
 import { ManualInvoiceEntrySchema, type ManualInvoiceEntryData } from '@/types/invoice-form';
+import { format as formatDateFn } from 'date-fns';
 
 
 // Helper to convert File object to data URI and Buffer
@@ -238,7 +239,7 @@ export async function handleInvoiceUpload(
       userId: new ObjectId(userIdString),
       fileName: file.name,
       vendor: extractedData.vendor,
-      date: extractedData.date,
+      date: extractedData.date, // Store as YYYY-MM-DD string as returned by AI
       total: extractedData.total,
       lineItems: extractedData.lineItems.map(item => ({
         description: item.description,
@@ -347,7 +348,7 @@ export async function handleManualInvoiceEntry(
   const validatedFields = ManualInvoiceEntrySchema.safeParse({
     userId: rawFormData.userId,
     vendor: rawFormData.vendor,
-    date: rawFormData.date,
+    date: rawFormData.date, // rawFormData.date is already 'yyyy-MM-dd'
     total: parseFloat(rawFormData.total), 
     lineItems: rawFormData.lineItems.map(li => ({
         description: li.description,
@@ -397,6 +398,7 @@ export async function handleManualInvoiceEntry(
 
 
   try {
+    // Date here is already 'yyyy-MM-dd' from validatedFields.data
     const summaryInput: SummarizeInvoiceInput = { vendor, date, total, lineItems };
     const summarizedData = await summarizeInvoice(summaryInput);
 
@@ -429,16 +431,15 @@ export async function handleManualInvoiceEntry(
         console.warn('Failed to generate summary embedding for manual invoice:', embeddingError.message);
       }
     }
-
-    const formattedDate = new Date(date).toISOString().split('T')[0];
-    const fileName = `Manual - ${vendor} - ${formattedDate}.json`; 
+    
+    const fileName = `Manual - ${vendor} - ${date}.json`; // date is 'yyyy-MM-dd'
 
     const { db } = await connectToDatabase();
     const invoiceDocumentForDb = {
       userId: new ObjectId(userId),
       fileName,
       vendor,
-      date, 
+      date, // Store 'yyyy-MM-dd' string directly
       total,
       lineItems,
       summary: summarizedData.summary,
@@ -492,7 +493,7 @@ export async function handleUpdateInvoice(
     userId: formData.get('userId') as string,
     invoiceId: formData.get('invoiceId') as string, 
     vendor: formData.get('vendor') as string,
-    date: formData.get('invoiceDate') as string,
+    date: formData.get('invoiceDate') as string, // This is 'yyyy-MM-dd' from form
     total: formData.get('total') as string,
     lineItems: [] as { description: string; amount: string }[],
     isMonthlyRecurring: formData.get('isMonthlyRecurring') === 'true',
@@ -516,7 +517,7 @@ export async function handleUpdateInvoice(
     userId: rawFormData.userId,
     invoiceId: rawFormData.invoiceId,
     vendor: rawFormData.vendor,
-    date: rawFormData.date,
+    date: rawFormData.date, // date is 'yyyy-MM-dd'
     total: parseFloat(rawFormData.total),
     lineItems: rawFormData.lineItems.map(li => ({
       description: li.description,
@@ -558,23 +559,25 @@ export async function handleUpdateInvoice(
         ? "User marked as monthly recurring." 
         : "User marked as not monthly recurring.";
     
-    const fileName = existingInvoice.gcsFileUri ? existingInvoice.fileName : `Manual - ${vendor} - ${new Date(date).toISOString().split('T')[0]}.json`;
+    const fileName = existingInvoice.gcsFileUri ? existingInvoice.fileName : `Manual - ${vendor} - ${date}.json`; // date is 'yyyy-MM-dd'
 
-    const updateData: Partial<Invoice> & { vendor: string; date: string; total: number; lineItems: LineItem[]; categories: string[]; isLikelyRecurring: boolean; recurrenceReasoning: string; fileName: string; } = {
+    // Fields that user can directly edit on the form
+    const updateFields: Partial<Invoice> & { vendor: string; date: string; total: number; lineItems: LineItem[]; categories: string[]; isLikelyRecurring: boolean; recurrenceReasoning: string; fileName: string; } = {
       vendor,
-      date,
+      date, // Store 'yyyy-MM-dd' string
       total,
       lineItems,
       categories: updatedCategories,
       isLikelyRecurring: updatedIsLikelyRecurring,
       recurrenceReasoning: updatedRecurrenceReasoning,
       fileName,
-      // summary and summaryEmbedding are intentionally omitted to preserve their original values
+      // summary and summaryEmbedding are intentionally NOT updated here to preserve original AI generation
+      // unless specific logic is added to re-run AI summary/embedding if key fields change.
     };
 
     const updateResult = await db.collection(INVOICES_COLLECTION).updateOne(
       { _id: mongoInvoiceId, userId: userObjectId },
-      { $set: updateData }
+      { $set: updateFields }
     );
 
     if (updateResult.matchedCount === 0) {
@@ -587,9 +590,10 @@ export async function handleUpdateInvoice(
     }
     const updatedInvoice = mapDocumentToInvoice(updatedDoc);
 
-    const successMessage = updateResult.modifiedCount > 0
-        ? `Successfully updated invoice for ${vendor}.`
-        : `Invoice for ${vendor} updated. Fields are now as submitted.`;
+    const successMessage = updateResult.modifiedCount > 0 || updateResult.matchedCount === 1
+        ? `Invoice for ${vendor} updated. Fields are now as submitted.`
+        : `Invoice details are already up to date or no effective change was made.`;
+
 
     return { invoice: updatedInvoice, message: successMessage };
 
@@ -1108,5 +1112,59 @@ export async function toggleInvoiceRecurrence(invoiceId: string, userId: string)
     }
 }
 
+export interface FetchInvoicesByMonthResponse {
+  invoices?: Invoice[];
+  error?: string;
+}
 
+export async function fetchInvoicesByMonth(userId: string, year: number, month: number): Promise<FetchInvoicesByMonthResponse> {
+  if (!userId) {
+    return { error: 'User ID is required.' };
+  }
+  if (!year || !month || month < 1 || month > 12) {
+    return { error: 'Valid year and month (1-12) are required.' };
+  }
+
+  try {
+    const { db } = await connectToDatabase();
+    const userObjectId = new ObjectId(userId);
+
+    // Construct date strings for the beginning and end of the month
+    // Ensure invoice.date is stored as 'YYYY-MM-DD' in the database for this to work correctly.
+    const startDate = new Date(year, month - 1, 1); // month is 0-indexed for Date constructor
+    const endDate = new Date(year, month, 0); // Day 0 of next month gives last day of current month
+
+    const startQueryDate = formatDateFn(startDate, 'yyyy-MM-dd');
+    const endQueryDate = formatDateFn(endDate, 'yyyy-MM-dd');
+    
+    const invoiceDocuments = await db
+      .collection(INVOICES_COLLECTION)
+      .find({
+        userId: userObjectId,
+        isDeleted: { $ne: true },
+        date: { 
+          $gte: startQueryDate, 
+          $lte: endQueryDate 
+        }
+      })
+      .sort({ date: 1, uploadedAt: -1 }) // Sort by invoice date, then upload time
+      .toArray();
+
+    const invoices: Invoice[] = invoiceDocuments.map(mapDocumentToInvoice);
+    return { invoices };
+
+  } catch (error: any) {
+    console.error('Error fetching invoices by month:', error);
+    let errorMessage = 'An unexpected error occurred while fetching monthly invoices.';
+    if (error instanceof Error) {
+      errorMessage = `Failed to fetch monthly invoices: ${error.message}`;
+      if (error.name === 'BSONError') {
+        errorMessage = 'Invalid User ID format for fetching monthly invoices.';
+      }
+    } else if (typeof error === 'string') {
+      errorMessage = `Failed to fetch monthly invoices: ${error}`;
+    }
+    return { error: errorMessage };
+  }
+}
 
