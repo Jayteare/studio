@@ -20,12 +20,10 @@ import { Calendar } from '@/components/ui/calendar';
 import { format, parseISO } from 'date-fns';
 import { cn } from '@/lib/utils';
 
-// Define a common type for the action state result
 interface ManualInvoiceFormActionState {
   invoice?: Invoice;
   error?: string;
   message?: string;
-  // This can be more specific if needed, e.g., matching Zod error format from server
   errors?: Partial<Record<keyof ManualInvoiceEntryData | string, string[]>>;
 }
 
@@ -35,9 +33,9 @@ export interface ManualInvoiceFormProps {
   invoiceToEdit?: Invoice | null;
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
-  serverActionDispatch: (formData: FormData) => void; // The dispatch function from useActionState
+  serverActionDispatch: (formData: FormData) => void;
   isActionPending: boolean;
-  actionState: ManualInvoiceFormActionState | undefined; // The state object from useActionState
+  actionState: ManualInvoiceFormActionState | undefined;
   onFormSuccess?: (invoice: Invoice) => void;
 }
 
@@ -59,7 +57,7 @@ export function ManualInvoiceForm({
     handleSubmit,
     register,
     reset,
-    formState: { errors: rhfErrors, isSubmitting: isRHFSubmitting }, // Renamed to rhfErrors to avoid conflict
+    formState: { errors: rhfErrors, isSubmitting: isRHFSubmitting },
     setValue,
     watch,
   } = useForm<ManualInvoiceEntryData>({
@@ -129,9 +127,7 @@ export function ManualInvoiceForm({
     }
   }, [mode, invoiceToEdit, reset, userId, isOpen]);
 
-  // Effect to handle results from server action
   useEffect(() => {
-    // Only react if the action is not pending and we have a result
     if (isActionPending || !actionState) {
       return;
     }
@@ -142,8 +138,6 @@ export function ManualInvoiceForm({
         description: actionState.error,
         variant: 'destructive',
       });
-      // Optionally, you could try to map actionState.errors to RHF errors here
-      // if the structure matches or can be adapted.
     } else if (actionState.invoice) {
       toast({
         title: mode === 'edit' ? 'Invoice Updated' : 'Invoice Saved',
@@ -153,9 +147,9 @@ export function ManualInvoiceForm({
       if (onFormSuccess) {
         onFormSuccess(actionState.invoice);
       }
-      onOpenChange(false); // Close dialog on success
+      onOpenChange(false);
     }
-  }, [actionState, isActionPending, mode, onFormSuccess, onOpenChange, toast]);
+  }, [actionState, isActionPending, mode, onFormSuccess, onOpenChange, toast, reset, userId]);
 
 
   const processForm = (data: ManualInvoiceEntryData) => {
@@ -165,7 +159,7 @@ export function ManualInvoiceForm({
         formDataPayload.append('invoiceId', data.invoiceId);
     }
     formDataPayload.append('vendor', data.vendor);
-    formDataPayload.append('invoiceDate', data.date); // Ensure this is 'invoiceDate' as expected by server
+    formDataPayload.append('invoiceDate', data.date);
     formDataPayload.append('total', data.total.toString());
     data.lineItems.forEach((item, index) => {
       formDataPayload.append(`lineItems[${index}].description`, item.description);
@@ -181,18 +175,17 @@ export function ManualInvoiceForm({
 
   const dialogTitle = mode === 'edit' ? 'Edit Invoice' : 'Add Manual Invoice';
   const dialogDescription = mode === 'edit'
-    ? 'Update the details for this invoice. AI-generated fields (summary, categories, recurrence) will be re-processed. You can manually set categories below.'
-    : 'Enter the details for an invoice manually. Mark if it\'s a recurring monthly expense. Provide categories or let AI suggest them.';
+    ? 'Update the details for this invoice. User-provided categories will be saved. Summary and embeddings remain from original.'
+    : 'Enter invoice details manually. Mark if recurring and optionally provide categories, or let AI suggest them.';
   const submitButtonText = mode === 'edit' ? 'Save Changes' : 'Save Invoice';
   const SubmitIcon = mode === 'edit' ? Edit : Save;
 
   const isFormSubmitting = isRHFSubmitting || isActionPending;
 
-
   return (
     <Dialog open={isOpen} onOpenChange={
         (open) => {
-            if(!open && mode === 'create' && !actionState?.invoice) { // Reset create form on close if it wasn't successfully submitted
+            if(!open && mode === 'create' && !actionState?.invoice) {
                  reset({
                     userId: userId,
                     invoiceId: undefined,
@@ -226,6 +219,7 @@ export function ManualInvoiceForm({
                 <Label htmlFor="vendor">Vendor Name</Label>
                 <Input id="vendor" {...register('vendor')} placeholder="e.g., Netflix, AWS" />
                 {rhfErrors.vendor && <p className="text-sm text-destructive mt-1">{rhfErrors.vendor.message}</p>}
+                {actionState?.errors?.vendor && <p className="text-sm text-destructive mt-1">{actionState.errors.vendor.join(', ')}</p>}
               </div>
 
               <div>
@@ -259,6 +253,7 @@ export function ManualInvoiceForm({
                     )}
                     />
                 {rhfErrors.date && <p className="text-sm text-destructive mt-1">{rhfErrors.date.message}</p>}
+                {actionState?.errors?.date && <p className="text-sm text-destructive mt-1">{actionState.errors.date.join(', ')}</p>}
               </div>
 
               <div className="flex items-center space-x-2">
@@ -288,9 +283,10 @@ export function ManualInvoiceForm({
                   className="text-sm"
                 />
                 <p className="text-xs text-muted-foreground mt-1">
-                  Leave empty to let AI suggest categories.
+                  {mode === 'edit' ? 'Edit categories here.' : 'Leave empty to let AI suggest categories.'}
                 </p>
                 {rhfErrors.categoriesString && <p className="text-sm text-destructive mt-1">{rhfErrors.categoriesString.message}</p>}
+                {actionState?.errors?.categoriesString && <p className="text-sm text-destructive mt-1">{actionState.errors.categoriesString.join(', ')}</p>}
               </div>
 
 
@@ -302,7 +298,7 @@ export function ManualInvoiceForm({
                     {fields.map((field, index) => (
                     <div key={field.id} className="flex items-end gap-2 border-b pb-2 last:border-b-0">
                         <div className="flex-grow space-y-1">
-                        <Label htmlFor={`lineItems[${index}].description`} className="sr-only">Description</Label>
+                        <Label htmlFor={`lineItems.${index}.description`} className="sr-only">Description</Label>
                         <Input
                             {...register(`lineItems.${index}.description`)}
                             placeholder="Item description"
@@ -311,9 +307,10 @@ export function ManualInvoiceForm({
                         {rhfErrors.lineItems?.[index]?.description && (
                             <p className="text-xs text-destructive">{rhfErrors.lineItems[index]?.description?.message}</p>
                         )}
+                        {actionState?.errors?.[`lineItems.${index}.description` as any] && <p className="text-xs text-destructive">{(actionState.errors[`lineItems.${index}.description` as any] as string[]).join(', ')}</p>}
                         </div>
                         <div className="w-1/3 space-y-1 relative flex items-center">
-                            <Label htmlFor={`lineItems[${index}].amount`} className="sr-only">Amount</Label>
+                            <Label htmlFor={`lineItems.${index}.amount`} className="sr-only">Amount</Label>
                             <DollarSign className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
                             <Input
                                 type="number"
@@ -325,6 +322,7 @@ export function ManualInvoiceForm({
                         {rhfErrors.lineItems?.[index]?.amount && (
                             <p className="text-xs text-destructive">{rhfErrors.lineItems[index]?.amount?.message}</p>
                         )}
+                        {actionState?.errors?.[`lineItems.${index}.amount` as any] && <p className="text-xs text-destructive">{(actionState.errors[`lineItems.${index}.amount` as any] as string[]).join(', ')}</p>}
                         </div>
                         <Button
                         type="button"
@@ -347,10 +345,12 @@ export function ManualInvoiceForm({
                     >
                     <PlusCircle className="mr-2 h-4 w-4" /> Add Line Item
                     </Button>
-                    {rhfErrors.lineItems && typeof rhfErrors.lineItems === 'object' && 'message' in rhfErrors.lineItems && (
-                        // @ts-ignore TODO: fix this type error for general message
-                        <p className="text-sm text-destructive mt-1">{rhfErrors.lineItems.message}</p>
+                    {rhfErrors.lineItems && typeof rhfErrors.lineItems === 'object' && !Array.isArray(rhfErrors.lineItems) && 'message' in rhfErrors.lineItems && (
+                        <p className="text-sm text-destructive mt-1">{(rhfErrors.lineItems as any).message}</p>
                     )}
+                    {actionState?.errors?.lineItems && typeof actionState.errors.lineItems === 'string' && <p className="text-sm text-destructive mt-1">{actionState.errors.lineItems}</p>}
+
+
                 </CardContent>
               </Card>
 
@@ -369,6 +369,7 @@ export function ManualInvoiceForm({
                   />
                 </div>
                 {rhfErrors.total && <p className="text-sm text-destructive mt-1">{rhfErrors.total.message}</p>}
+                {actionState?.errors?.total && <p className="text-sm text-destructive mt-1">{actionState.errors.total.join(', ')}</p>}
               </div>
 
             </div>
@@ -376,7 +377,7 @@ export function ManualInvoiceForm({
           <DialogFooter className="pt-6">
             <DialogClose asChild>
                 <Button type="button" variant="outline" onClick={() => {
-                    onOpenChange(false); // Resetting form is handled by useEffect on isOpen change now
+                    onOpenChange(false);
                     }}>Cancel</Button>
             </DialogClose>
             <Button type="submit" disabled={isFormSubmitting}>
@@ -398,3 +399,5 @@ export function ManualInvoiceForm({
     </Dialog>
   );
 }
+
+    
