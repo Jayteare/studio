@@ -10,11 +10,11 @@ import type { Invoice } from '@/types/invoice';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Checkbox } from '@/components/ui/checkbox'; // Added Checkbox import
+import { Checkbox } from '@/components/ui/checkbox';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter, DialogClose } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Loader2, PlusCircle, Save, Trash2, CalendarIcon, RefreshCw } from 'lucide-react'; // Added RefreshCw icon
+import { Loader2, PlusCircle, Save, Trash2, CalendarIcon } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Calendar } from '@/components/ui/calendar';
@@ -49,7 +49,7 @@ export function ManualInvoiceForm({ userId, onInvoiceAdded, isOpen, onOpenChange
     defaultValues: {
       userId: userId,
       vendor: '',
-      date: new Date().toISOString().split('T')[0], // Default to today
+      date: new Date().toISOString().split('T')[0], 
       total: 0,
       lineItems: [{ description: '', amount: 0 }],
       isMonthlyRecurring: false,
@@ -61,13 +61,6 @@ export function ManualInvoiceForm({ userId, onInvoiceAdded, isOpen, onOpenChange
     name: 'lineItems',
   });
   
-  const lineItemsWatch = watch('lineItems'); 
-
-  useEffect(() => {
-    const calculatedTotal = lineItemsWatch.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
-    setValue('total', calculatedTotal, { shouldValidate: true });
-  }, [lineItemsWatch, setValue]);
-
 
   useEffect(() => {
     if (actionState?.error) {
@@ -84,7 +77,7 @@ export function ManualInvoiceForm({ userId, onInvoiceAdded, isOpen, onOpenChange
         variant: 'default',
       });
       onInvoiceAdded(actionState.invoice);
-      reset({ // Reset with userId and default date/recurring status
+      reset({ 
         userId: userId,
         vendor: '',
         date: new Date().toISOString().split('T')[0],
@@ -114,8 +107,8 @@ export function ManualInvoiceForm({ userId, onInvoiceAdded, isOpen, onOpenChange
   return (
     <Dialog open={isOpen} onOpenChange={
         (open) => {
-            if(!open) { // If dialog is closing
-                 reset({ // Reset form to defaults when dialog closes
+            if(!open) { 
+                 reset({ 
                     userId: userId,
                     vendor: '',
                     date: new Date().toISOString().split('T')[0],
@@ -268,7 +261,7 @@ export function ManualInvoiceForm({ userId, onInvoiceAdded, isOpen, onOpenChange
 
               <div>
                 <Label htmlFor="total">Total Amount</Label>
-                <Input id="total" type="number" step="0.01" {...register('total', { valueAsNumber: true })} placeholder="0.00" readOnly className="font-semibold bg-muted" />
+                <Input id="total" type="number" step="0.01" {...register('total', { valueAsNumber: true })} placeholder="0.00" className="font-semibold" />
                 {errors.total && <p className="text-sm text-destructive mt-1">{errors.total.message}</p>}
                 {actionState?.errors?.total && <p className="text-sm text-destructive mt-1">{actionState.errors.total.join(', ')}</p>}
               </div>
@@ -301,3 +294,4 @@ export function ManualInvoiceForm({ userId, onInvoiceAdded, isOpen, onOpenChange
     </Dialog>
   );
 }
+
