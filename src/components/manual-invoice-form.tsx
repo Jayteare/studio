@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useEffect, useActionState } from 'react';
+import React, { useEffect, useActionState } from 'react';
 import { useForm, useFieldArray, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { handleManualInvoiceEntry, type ManualInvoiceFormState } from '@/app/dashboard/actions';
@@ -34,7 +34,7 @@ type FormData = ManualInvoiceEntryData;
 
 export function ManualInvoiceForm({ userId, onInvoiceAdded, isOpen, onOpenChange }: ManualInvoiceFormProps) {
   const { toast } = useToast();
-  const [actionState, formAction, isPending] = useActionState(handleManualInvoiceEntry, undefined);
+  const [actionState, formAction, isPendingAction] = useActionState(handleManualInvoiceEntry, undefined);
 
   const {
     control,
@@ -89,8 +89,8 @@ export function ManualInvoiceForm({ userId, onInvoiceAdded, isOpen, onOpenChange
     }
   }, [actionState, toast, onInvoiceAdded, reset, onOpenChange, userId]);
 
-  const processForm = async (data: FormData) => {
-    const formDataPayload = new FormData();
+  const processForm = (data: FormData) => { // data from react-hook-form's handleSubmit
+    const formDataPayload = new FormData(); // Browser FormData for server action
     formDataPayload.append('userId', data.userId);
     formDataPayload.append('vendor', data.vendor);
     formDataPayload.append('invoiceDate', data.date); 
@@ -100,7 +100,10 @@ export function ManualInvoiceForm({ userId, onInvoiceAdded, isOpen, onOpenChange
       formDataPayload.append(`lineItems[${index}].amount`, item.amount.toString());
     });
     formDataPayload.append('isMonthlyRecurring', data.isMonthlyRecurring ? 'true' : 'false');
-    formAction(formDataPayload);
+    
+    React.startTransition(() => {
+      formAction(formDataPayload);
+    });
   };
   
 
@@ -275,8 +278,8 @@ export function ManualInvoiceForm({ userId, onInvoiceAdded, isOpen, onOpenChange
                     onOpenChange(false);
                     }}>Cancel</Button>
             </DialogClose>
-            <Button type="submit" disabled={isSubmitting || isPending}>
-              {(isSubmitting || isPending) ? (
+            <Button type="submit" disabled={isSubmitting || isPendingAction}>
+              {(isSubmitting || isPendingAction) ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   Saving...
