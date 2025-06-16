@@ -1,17 +1,23 @@
 
 "use client";
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useActionState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useAuth } from '@/hooks/use-auth';
-import { fetchInvoiceById, type FetchInvoiceByIdResponse, findSimilarInvoices, type FindSimilarInvoicesResponse, toggleInvoiceRecurrence, type ToggleRecurrenceResponse } from '@/app/dashboard/actions';
+import { 
+    fetchInvoiceById, type FetchInvoiceByIdResponse, 
+    findSimilarInvoices, type FindSimilarInvoicesResponse, 
+    toggleInvoiceRecurrence, type ToggleRecurrenceResponse,
+    handleUpdateInvoice, type UpdateInvoiceFormState
+} from '@/app/dashboard/actions';
 import type { Invoice, LineItem } from '@/types/invoice';
+import { ManualInvoiceForm } from '@/components/manual-invoice-form';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, ArrowLeft, FileText, CalendarDays, CircleDollarSign, Info, AlertTriangle, ExternalLink, Copy, Tag, Repeat, XCircle } from 'lucide-react';
-import { format } from 'date-fns';
+import { Loader2, ArrowLeft, FileText, CalendarDays, CircleDollarSign, Info, AlertTriangle, ExternalLink, Copy, Tag, Repeat, XCircle, EditIcon } from 'lucide-react';
+import { format, parseISO } from 'date-fns';
 import Link from 'next/link';
 import { AppLogo } from '@/components/app-logo';
 import { useToast } from '@/hooks/use-toast';
@@ -32,7 +38,17 @@ export default function InvoiceDetailPage() {
   const [errorSimilar, setErrorSimilar] = useState<string | null>(null);
   const [isTogglingRecurrence, setIsTogglingRecurrence] = useState(false);
 
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+
   const invoiceId = Array.isArray(params.invoiceId) ? params.invoiceId[0] : params.invoiceId;
+
+  // Action state for updating the invoice
+  const [updateFormState, updateInvoiceAction, isUpdatePending] = useActionState(
+    // Bind the invoiceId to the server action if it exists
+    invoiceId ? handleUpdateInvoice.bind(null, invoiceId) : async () => ({ error: "Invoice ID missing" }), 
+    undefined as UpdateInvoiceFormState | undefined
+  );
+
 
   const loadInvoiceDetails = useCallback(async () => {
     if (!isAuthenticated || !user?.id || !invoiceId) {
@@ -76,10 +92,8 @@ export default function InvoiceDetailPage() {
   const loadSimilarInvoices = useCallback(async () => {
     if (!invoice || !user?.id) return;
 
-    // Only attempt to find similar if the current invoice has an embedding
     if (!invoice.summaryEmbedding || invoice.summaryEmbedding.length === 0) {
         setSimilarInvoices([]);
-        // Optionally, set a message like "No embedding available for similarity search."
         return;
     }
 
@@ -89,14 +103,12 @@ export default function InvoiceDetailPage() {
 
     if (response.error) {
       setErrorSimilar(response.error);
-      // Optionally show a toast for similar invoices error, but can be noisy
-      // toast({ title: 'Could not load similar invoices', description: response.error, variant: 'default' });
       setSimilarInvoices([]);
     } else if (response.similarInvoices) {
       setSimilarInvoices(response.similarInvoices);
     }
     setIsLoadingSimilar(false);
-  }, [invoice, user?.id, toast]); 
+  }, [invoice, user?.id]); 
 
   useEffect(() => {
     if (invoice && user?.id) {
@@ -118,7 +130,7 @@ export default function InvoiceDetailPage() {
             variant: 'destructive',
         });
     } else if (response.invoice) {
-        setInvoice(response.invoice); // Update the local state with the modified invoice
+        setInvoice(response.invoice); 
         toast({
             title: 'Recurrence Status Updated',
             description: `Invoice marked as ${response.invoice.isLikelyRecurring ? 'monthly recurring' : 'not monthly recurring'}.`,
@@ -127,20 +139,35 @@ export default function InvoiceDetailPage() {
     }
   };
 
+  const handleEditSuccess = (updatedInvoice: Invoice) => {
+    setInvoice(updatedInvoice); // Update the local state for immediate reflection
+    setIsEditDialogOpen(false);
+    // Optionally, trigger a full reload of similar invoices if content changed significantly
+    // loadSimilarInvoices(); 
+    // The toast for success is handled within ManualInvoiceForm via serverAction result
+  };
+
 
   const formatDate = (dateString?: string) => {
     if (!dateString) return 'N/A';
     try {
-      let date = new Date(dateString);
+      let date = parseISO(dateString); // Use parseISO for reliability with ISO strings
       if (isNaN(date.getTime())) {
-        const parts = dateString.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
+         // Fallback for non-ISO simple dates, e.g. YYYY-MM-DD from calendar picker
+        const parts = dateString.match(/(\d{4})-(\d{2})-(\d{2})/);
         if (parts) {
-            let year = parseInt(parts[3], 10);
-            if (year < 100) year += 2000; 
-            date = new Date(year, parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+            date = new Date(parseInt(parts[1]), parseInt(parts[2]) - 1, parseInt(parts[3]));
         } else {
-            console.warn(`Could not parse date string: ${dateString}`);
-            return dateString; 
+            // Further fallback for MM/DD/YYYY or other common formats if necessary
+             const commonFormatParts = dateString.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
+             if (commonFormatParts) {
+                let year = parseInt(commonFormatParts[3], 10);
+                if (year < 100) year += 2000;
+                date = new Date(year, parseInt(commonFormatParts[1], 10) - 1, parseInt(commonFormatParts[2], 10));
+             } else {
+                console.warn(`Could not parse date string with known formats: ${dateString}`);
+                return dateString; 
+             }
         }
       }
       if (isNaN(date.getTime())) {
@@ -148,16 +175,15 @@ export default function InvoiceDetailPage() {
         return dateString;
       }
       
-      // Handle YYYY-MM-DD strings which might be parsed as UTC by new Date() leading to off-by-one day
-      if (dateString.match(/^\d{4}-\d{2}-\d{2}$/)) {
-        const [year, month, day] = dateString.split('-').map(Number);
-        return format(new Date(year, month - 1, day), 'PPP'); // Specify local timezone interpretation
+      // For full datetime strings (like uploadedAt), 'PPP p' is fine
+      // For date-only strings, 'PPP' is better
+      if (dateString.length === 10 && dateString.includes('-')) { // Likely YYYY-MM-DD
+        return format(date, 'PPP');
       }
-
-      return format(date, 'PPP p'); // For full datetime strings, PPP p is fine
+      return format(date, 'PPP p');
     } catch (error) {
       console.warn(`Error formatting date: ${dateString}`, error);
-      return dateString; // Fallback to original string if formatting fails
+      return dateString; 
     }
   };
 
@@ -217,10 +243,16 @@ export default function InvoiceDetailPage() {
       <header className="sticky top-0 z-50 w-full border-b border-border/40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
         <div className="container flex h-16 max-w-screen-2xl items-center justify-between">
           <AppLogo iconSizeClass="h-7 w-7" textSizeClass="text-2xl" />
-          <Button variant="outline" size="sm" onClick={() => router.push('/dashboard')}>
-            <ArrowLeft className="mr-2 h-4 w-4" />
-            Back to Dashboard
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => setIsEditDialogOpen(true)} disabled={isUpdatePending}>
+                <EditIcon className="mr-2 h-4 w-4" />
+                Edit Invoice
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => router.push('/dashboard')}>
+                <ArrowLeft className="mr-2 h-4 w-4" />
+                Back to Dashboard
+            </Button>
+          </div>
         </div>
       </header>
 
@@ -335,12 +367,11 @@ export default function InvoiceDetailPage() {
            </CardFooter>
         </Card>
 
-        {/* Similar Invoices Section */}
         { (invoice.summaryEmbedding && invoice.summaryEmbedding.length > 0) && (
           <Card className="shadow-lg mt-8">
             <CardHeader>
               <CardTitle className="font-headline text-2xl flex items-center gap-2">
-                <Copy className="h-5 w-5 text-primary" /> {/* Using Copy icon as a placeholder for similarity */}
+                <Copy className="h-5 w-5 text-primary" /> 
                 Similar Invoices
               </CardTitle>
               <CardDescription>Other invoices with similar content based on AI analysis of their summaries.</CardDescription>
@@ -411,15 +442,25 @@ export default function InvoiceDetailPage() {
             </p>
           </div>
         </footer>
+
+        {user?.id && invoice && (
+            <ManualInvoiceForm
+                userId={user.id}
+                mode="edit"
+                invoiceToEdit={invoice}
+                isOpen={isEditDialogOpen}
+                onOpenChange={setIsEditDialogOpen}
+                serverAction={updateInvoiceAction}
+                isActionPending={isUpdatePending}
+                onFormSuccess={handleEditSuccess}
+            />
+        )}
     </div>
   );
 }
 
-// Re-define Label component locally as it's not exported from ui/label if not using Form context
-// Or ensure it's exported from a shared location if used across multiple non-form pages.
 const Label: React.FC<React.HTMLAttributes<HTMLLabelElement>> = ({ className, children, ...props }) => (
   <label className={cn("block text-sm font-medium text-muted-foreground", className)} {...props}>
     {children}
   </label>
 );
-

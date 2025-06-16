@@ -4,7 +4,6 @@
 import React, { useEffect, useActionState } from 'react';
 import { useForm, useFieldArray, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { handleManualInvoiceEntry, type ManualInvoiceFormState } from '@/app/dashboard/actions';
 import { ManualInvoiceEntrySchema, type ManualInvoiceEntryData } from '@/types/invoice-form';
 import type { Invoice } from '@/types/invoice';
 import { Button } from '@/components/ui/button';
@@ -14,45 +13,65 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter, DialogClose } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Loader2, PlusCircle, Save, Trash2, CalendarIcon, DollarSign } from 'lucide-react';
+import { Loader2, PlusCircle, Save, Trash2, CalendarIcon, DollarSign, Edit } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Calendar } from '@/components/ui/calendar';
-import { format } from 'date-fns';
+import { format, parseISO } from 'date-fns';
 import { cn } from '@/lib/utils';
 
 
 export interface ManualInvoiceFormProps {
   userId: string;
-  onInvoiceAdded: (invoice: Invoice) => void;
+  mode: 'create' | 'edit';
+  invoiceToEdit?: Invoice | null;
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
+  // Pass the server action from the parent (e.g., handleManualInvoiceEntry or handleUpdateInvoice)
+  // The parent will use useActionState to get this action function and the pending state.
+  serverAction: (formData: FormData) => Promise<any>; // 'any' because return type varies (ManualInvoiceFormState | UpdateInvoiceFormState)
+  isActionPending: boolean;
+  onFormSuccess?: (invoice: Invoice) => void; // Callback for parent to update its state
 }
 
 type FormData = ManualInvoiceEntryData;
 
 
-export function ManualInvoiceForm({ userId, onInvoiceAdded, isOpen, onOpenChange }: ManualInvoiceFormProps) {
+export function ManualInvoiceForm({ 
+    userId, 
+    mode,
+    invoiceToEdit,
+    isOpen, 
+    onOpenChange,
+    serverAction,
+    isActionPending,
+    onFormSuccess
+}: ManualInvoiceFormProps) {
   const { toast } = useToast();
-  const [actionState, formAction, isPendingAction] = useActionState(handleManualInvoiceEntry, undefined);
+
+  const defaultDate = invoiceToEdit?.date 
+    ? format(parseISO(invoiceToEdit.date), 'yyyy-MM-dd') 
+    : new Date().toISOString().split('T')[0];
 
   const {
     control,
     handleSubmit,
     register,
     reset,
-    formState: { errors, isSubmitting },
+    formState: { errors, isSubmitting: isRHFSubmitting }, // isSubmitting from RHF
     setValue,
-    watch
   } = useForm<FormData>({
     resolver: zodResolver(ManualInvoiceEntrySchema),
     defaultValues: {
       userId: userId,
-      vendor: '',
-      date: new Date().toISOString().split('T')[0], 
-      total: 0,
-      lineItems: [{ description: '', amount: 0 }],
-      isMonthlyRecurring: false,
+      invoiceId: invoiceToEdit?.id || undefined,
+      vendor: invoiceToEdit?.vendor || '',
+      date: defaultDate,
+      total: invoiceToEdit?.total || 0,
+      lineItems: invoiceToEdit?.lineItems && invoiceToEdit.lineItems.length > 0 
+                 ? invoiceToEdit.lineItems.map(li => ({ description: li.description, amount: li.amount })) 
+                 : [{ description: '', amount: 0 }],
+      isMonthlyRecurring: invoiceToEdit?.isLikelyRecurring || false,
     },
   });
 
@@ -60,40 +79,40 @@ export function ManualInvoiceForm({ userId, onInvoiceAdded, isOpen, onOpenChange
     control,
     name: 'lineItems',
   });
-  
 
   useEffect(() => {
-    if (actionState?.error) {
-      toast({
-        title: 'Save Failed',
-        description: actionState.error,
-        variant: 'destructive',
-      });
-    }
-    if (actionState?.invoice) {
-      toast({
-        title: 'Invoice Saved',
-        description: actionState.message || `Manual invoice for ${actionState.invoice.vendor} saved.`,
-        variant: 'default',
-      });
-      onInvoiceAdded(actionState.invoice);
-      reset({ 
+    if (mode === 'edit' && invoiceToEdit) {
+      reset({
         userId: userId,
+        invoiceId: invoiceToEdit.id,
+        vendor: invoiceToEdit.vendor,
+        date: invoiceToEdit.date ? format(parseISO(invoiceToEdit.date), 'yyyy-MM-dd') : new Date().toISOString().split('T')[0],
+        total: invoiceToEdit.total,
+        lineItems: invoiceToEdit.lineItems.map(li => ({ description: li.description, amount: li.amount })),
+        isMonthlyRecurring: invoiceToEdit.isLikelyRecurring || false,
+      });
+    } else if (mode === 'create') {
+      reset({
+        userId: userId,
+        invoiceId: undefined,
         vendor: '',
         date: new Date().toISOString().split('T')[0],
         total: 0,
         lineItems: [{ description: '', amount: 0 }],
         isMonthlyRecurring: false,
       });
-      onOpenChange(false); 
     }
-  }, [actionState, toast, onInvoiceAdded, reset, onOpenChange, userId]);
+  }, [mode, invoiceToEdit, reset, userId]);
+  
 
-  const processForm = (data: FormData) => { 
-    const formDataPayload = new FormData(); 
+  const processForm = async (data: FormData) => {
+    const formDataPayload = new FormData();
     formDataPayload.append('userId', data.userId);
+    if (mode === 'edit' && data.invoiceId) {
+        formDataPayload.append('invoiceId', data.invoiceId);
+    }
     formDataPayload.append('vendor', data.vendor);
-    formDataPayload.append('invoiceDate', data.date); 
+    formDataPayload.append('invoiceDate', data.date);
     formDataPayload.append('total', data.total.toString());
     data.lineItems.forEach((item, index) => {
       formDataPayload.append(`lineItems[${index}].description`, item.description);
@@ -101,45 +120,73 @@ export function ManualInvoiceForm({ userId, onInvoiceAdded, isOpen, onOpenChange
     });
     formDataPayload.append('isMonthlyRecurring', data.isMonthlyRecurring ? 'true' : 'false');
     
-    React.startTransition(() => {
-      formAction(formDataPayload);
-    });
+    // The parent's useActionState handles the actual call and state updates.
+    // This function is now more about preparing FormData and calling the action passed from parent.
+    const actionResult = await serverAction(formDataPayload);
+
+    if (actionResult?.error) {
+      toast({
+        title: mode === 'edit' ? 'Update Failed' : 'Save Failed',
+        description: actionResult.error,
+        variant: 'destructive',
+      });
+      // If actionResult.errors (field specific), RHF might not show them automatically
+      // as this is not a direct RHF submit with useFormState.
+      // For now, relying on the general error toast.
+    }
+    if (actionResult?.invoice) {
+      toast({
+        title: mode === 'edit' ? 'Invoice Updated' : 'Invoice Saved',
+        description: actionResult.message || `${actionResult.invoice.vendor} details saved.`,
+        variant: 'default',
+      });
+      if (onFormSuccess) {
+        onFormSuccess(actionResult.invoice);
+      }
+      // Resetting form is handled by useEffect or parent closing dialog.
+      onOpenChange(false); 
+    }
   };
   
+  const dialogTitle = mode === 'edit' ? 'Edit Invoice' : 'Add Manual Invoice';
+  const dialogDescription = mode === 'edit' 
+    ? 'Update the details for this invoice. AI-generated fields will be re-processed.'
+    : 'Enter the details for an invoice manually. Mark if it\'s a recurring monthly expense.';
+  const submitButtonText = mode === 'edit' ? 'Save Changes' : 'Save Invoice';
+  const SubmitIcon = mode === 'edit' ? Edit : Save;
+
+  const isFormSubmitting = isRHFSubmitting || isActionPending;
+
 
   return (
     <Dialog open={isOpen} onOpenChange={
         (open) => {
             if(!open) { 
-                 reset({ 
-                    userId: userId,
-                    vendor: '',
-                    date: new Date().toISOString().split('T')[0],
-                    total: 0,
-                    lineItems: [{ description: '', amount: 0 }],
-                    isMonthlyRecurring: false,
-                 });
+                 // Reset logic handled by useEffect based on mode/invoiceToEdit
             }
             onOpenChange(open);
         }
     }>
       <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Add Manual Invoice</DialogTitle>
+          <DialogTitle>{dialogTitle}</DialogTitle>
           <DialogDescription>
-            Enter the details for an invoice manually. Mark if it's a recurring monthly expense.
+            {dialogDescription}
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit(processForm)}>
           <ScrollArea className="h-[60vh] pr-6">
             <div className="space-y-6 p-1">
               <input type="hidden" {...register('userId')} value={userId} />
+              {mode === 'edit' && invoiceToEdit && (
+                <input type="hidden" {...register('invoiceId')} value={invoiceToEdit.id} />
+              )}
+
 
               <div>
                 <Label htmlFor="vendor">Vendor Name</Label>
                 <Input id="vendor" {...register('vendor')} placeholder="e.g., Netflix, AWS" />
                 {errors.vendor && <p className="text-sm text-destructive mt-1">{errors.vendor.message}</p>}
-                {actionState?.errors?.vendor && <p className="text-sm text-destructive mt-1">{actionState.errors.vendor.join(', ')}</p>}
               </div>
 
               <div>
@@ -158,13 +205,13 @@ export function ManualInvoiceForm({ userId, onInvoiceAdded, isOpen, onOpenChange
                             )}
                             >
                              <CalendarIcon className="mr-2 h-4 w-4" />
-                            {field.value ? format(new Date(field.value), "PPP") : <span>Pick a date</span>}
+                            {field.value ? format(parseISO(field.value), "PPP") : <span>Pick a date</span>}
                             </Button>
                         </PopoverTrigger>
                         <PopoverContent className="w-auto p-0">
                             <Calendar
                             mode="single"
-                            selected={field.value ? new Date(field.value) : undefined}
+                            selected={field.value ? parseISO(field.value) : undefined}
                             onSelect={(date) => field.onChange(date ? format(date, 'yyyy-MM-dd') : '')}
                             initialFocus
                             />
@@ -173,7 +220,6 @@ export function ManualInvoiceForm({ userId, onInvoiceAdded, isOpen, onOpenChange
                     )}
                     />
                 {errors.date && <p className="text-sm text-destructive mt-1">{errors.date.message}</p>}
-                {actionState?.errors?.date && <p className="text-sm text-destructive mt-1">{actionState.errors.date.join(', ')}</p>}
               </div>
               
                <div className="flex items-center space-x-2">
@@ -212,9 +258,6 @@ export function ManualInvoiceForm({ userId, onInvoiceAdded, isOpen, onOpenChange
                         {errors.lineItems?.[index]?.description && (
                             <p className="text-xs text-destructive">{errors.lineItems[index]?.description?.message}</p>
                         )}
-                         {actionState?.errors?.[`lineItems.${index}.description` as const] && (
-                            <p className="text-xs text-destructive">{actionState.errors[`lineItems.${index}.description` as const]!.join(', ')}</p>
-                        )}
                         </div>
                         <div className="w-1/3 space-y-1 relative flex items-center">
                             <Label htmlFor={`lineItems[${index}].amount`} className="sr-only">Amount</Label>
@@ -224,13 +267,10 @@ export function ManualInvoiceForm({ userId, onInvoiceAdded, isOpen, onOpenChange
                                 step="0.01"
                                 {...register(`lineItems.${index}.amount`, { valueAsNumber: true })}
                                 placeholder="Amount"
-                                className="text-sm pl-7" // Added pl-7 for padding
+                                className="text-sm pl-7"
                             />
                         {errors.lineItems?.[index]?.amount && (
                             <p className="text-xs text-destructive">{errors.lineItems[index]?.amount?.message}</p>
-                        )}
-                        {actionState?.errors?.[`lineItems.${index}.amount` as const] && (
-                            <p className="text-xs text-destructive">{actionState.errors[`lineItems.${index}.amount` as const]!.join(', ')}</p>
                         )}
                         </div>
                         <Button
@@ -257,9 +297,6 @@ export function ManualInvoiceForm({ userId, onInvoiceAdded, isOpen, onOpenChange
                     {errors.lineItems && typeof errors.lineItems === 'object' && 'message' in errors.lineItems && (
                         <p className="text-sm text-destructive mt-1">{errors.lineItems.message}</p>
                     )}
-                    {actionState?.errors?.lineItems && typeof actionState.errors.lineItems === 'string' &&(
-                         <p className="text-sm text-destructive mt-1">{actionState.errors.lineItems}</p>
-                    )}
                 </CardContent>
               </Card>
 
@@ -267,7 +304,6 @@ export function ManualInvoiceForm({ userId, onInvoiceAdded, isOpen, onOpenChange
                 <Label htmlFor="total">Total Amount</Label>
                 <Input id="total" type="number" step="0.01" {...register('total', { valueAsNumber: true })} placeholder="0.00" className="font-semibold" />
                 {errors.total && <p className="text-sm text-destructive mt-1">{errors.total.message}</p>}
-                {actionState?.errors?.total && <p className="text-sm text-destructive mt-1">{actionState.errors.total.join(', ')}</p>}
               </div>
 
             </div>
@@ -275,20 +311,20 @@ export function ManualInvoiceForm({ userId, onInvoiceAdded, isOpen, onOpenChange
           <DialogFooter className="pt-6">
             <DialogClose asChild>
                 <Button type="button" variant="outline" onClick={() => { 
-                    reset({ userId: userId, vendor: '', date: new Date().toISOString().split('T')[0], total: 0, lineItems: [{ description: '', amount: 0 }], isMonthlyRecurring: false }); 
+                    // Reset is handled by useEffect when isOpen changes or by parent logic.
                     onOpenChange(false);
                     }}>Cancel</Button>
             </DialogClose>
-            <Button type="submit" disabled={isSubmitting || isPendingAction}>
-              {(isSubmitting || isPendingAction) ? (
+            <Button type="submit" disabled={isFormSubmitting}>
+              {isFormSubmitting ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   Saving...
                 </>
               ) : (
                 <>
-                  <Save className="mr-2 h-4 w-4" />
-                  Save Invoice
+                  <SubmitIcon className="mr-2 h-4 w-4" />
+                  {submitButtonText}
                 </>
               )}
             </Button>
