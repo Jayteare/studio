@@ -1,3 +1,4 @@
+
 'use server';
 
 /**
@@ -59,6 +60,18 @@ const extractInvoiceDataFlow = ai.defineFlow(
   },
   async input => {
     const {output} = await prompt(input);
-    return output!;
+    if (!output) {
+      throw new Error('AI data extraction failed: No output received from the model.');
+    }
+    // Perform basic validation for key fields existence
+    if (typeof output.vendor === 'undefined' || 
+        typeof output.date === 'undefined' || 
+        typeof output.total === 'undefined' || 
+        !Array.isArray(output.lineItems)) {
+      console.error("AI output missing key fields:", output);
+      throw new Error('AI data extraction failed: Key fields (vendor, date, total, lineItems) are missing or invalid in the model response.');
+    }
+    return output;
   }
 );
+

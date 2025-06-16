@@ -1,3 +1,4 @@
+
 'use server';
 
 /**
@@ -56,6 +57,11 @@ const summarizeInvoiceFlow = ai.defineFlow(
   },
   async input => {
     const {output} = await summarizeInvoicePrompt(input);
-    return output!;
+    if (!output || typeof output.summary === 'undefined') {
+      console.error("AI summarization output missing summary:", output);
+      throw new Error('AI summarization failed: No summary received or summary field is missing from the model.');
+    }
+    return output;
   }
 );
+
