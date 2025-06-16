@@ -1,8 +1,8 @@
 
 "use client";
 
-import React, { useEffect, useActionState } from 'react';
-import { useForm, useFieldArray, Controller, useWatch } from 'react-hook-form';
+import React, { useEffect } from 'react';
+import { useForm, useFieldArray, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { ManualInvoiceEntrySchema, type ManualInvoiceEntryData } from '@/types/invoice-form';
 import type { Invoice } from '@/types/invoice';
@@ -20,6 +20,14 @@ import { Calendar } from '@/components/ui/calendar';
 import { format, parseISO } from 'date-fns';
 import { cn } from '@/lib/utils';
 
+// Define a common type for the action state result
+interface ManualInvoiceFormActionState {
+  invoice?: Invoice;
+  error?: string;
+  message?: string;
+  // This can be more specific if needed, e.g., matching Zod error format from server
+  errors?: Partial<Record<keyof ManualInvoiceEntryData | string, string[]>>;
+}
 
 export interface ManualInvoiceFormProps {
   userId: string;
@@ -27,13 +35,11 @@ export interface ManualInvoiceFormProps {
   invoiceToEdit?: Invoice | null;
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
-  serverAction: (formData: FormData) => Promise<any>; 
+  serverActionDispatch: (formData: FormData) => void; // The dispatch function from useActionState
   isActionPending: boolean;
-  onFormSuccess?: (invoice: Invoice) => void; 
+  actionState: ManualInvoiceFormActionState | undefined; // The state object from useActionState
+  onFormSuccess?: (invoice: Invoice) => void;
 }
-
-type FormData = ManualInvoiceEntryData;
-
 
 export function ManualInvoiceForm({
     userId,
@@ -41,8 +47,9 @@ export function ManualInvoiceForm({
     invoiceToEdit,
     isOpen,
     onOpenChange,
-    serverAction,
+    serverActionDispatch,
     isActionPending,
+    actionState,
     onFormSuccess
 }: ManualInvoiceFormProps) {
   const { toast } = useToast();
@@ -52,10 +59,10 @@ export function ManualInvoiceForm({
     handleSubmit,
     register,
     reset,
-    formState: { errors, isSubmitting: isRHFSubmitting },
+    formState: { errors: rhfErrors, isSubmitting: isRHFSubmitting }, // Renamed to rhfErrors to avoid conflict
     setValue,
     watch,
-  } = useForm<FormData>({
+  } = useForm<ManualInvoiceEntryData>({
     resolver: zodResolver(ManualInvoiceEntrySchema),
     defaultValues: {
       userId: userId,
@@ -90,10 +97,11 @@ export function ManualInvoiceForm({
 
   useEffect(() => {
     if (isOpen) {
+      const defaultDate = new Date().toISOString().split('T')[0];
       if (mode === 'edit' && invoiceToEdit) {
         const editDate = invoiceToEdit.date
             ? format(parseISO(invoiceToEdit.date), 'yyyy-MM-dd')
-            : new Date().toISOString().split('T')[0];
+            : defaultDate;
         reset({
           userId: userId,
           invoiceId: invoiceToEdit.id,
@@ -111,7 +119,7 @@ export function ManualInvoiceForm({
           userId: userId,
           invoiceId: undefined,
           vendor: '',
-          date: new Date().toISOString().split('T')[0],
+          date: defaultDate,
           total: 0,
           lineItems: [{ description: '', amount: 0 }],
           isMonthlyRecurring: false,
@@ -121,15 +129,43 @@ export function ManualInvoiceForm({
     }
   }, [mode, invoiceToEdit, reset, userId, isOpen]);
 
+  // Effect to handle results from server action
+  useEffect(() => {
+    // Only react if the action is not pending and we have a result
+    if (isActionPending || !actionState) {
+      return;
+    }
 
-  const processForm = async (data: FormData) => {
+    if (actionState.error) {
+      toast({
+        title: mode === 'edit' ? 'Update Failed' : 'Save Failed',
+        description: actionState.error,
+        variant: 'destructive',
+      });
+      // Optionally, you could try to map actionState.errors to RHF errors here
+      // if the structure matches or can be adapted.
+    } else if (actionState.invoice) {
+      toast({
+        title: mode === 'edit' ? 'Invoice Updated' : 'Invoice Saved',
+        description: actionState.message || `${actionState.invoice.vendor} details saved.`,
+        variant: 'default',
+      });
+      if (onFormSuccess) {
+        onFormSuccess(actionState.invoice);
+      }
+      onOpenChange(false); // Close dialog on success
+    }
+  }, [actionState, isActionPending, mode, onFormSuccess, onOpenChange, toast]);
+
+
+  const processForm = (data: ManualInvoiceEntryData) => {
     const formDataPayload = new FormData();
     formDataPayload.append('userId', data.userId);
     if (mode === 'edit' && data.invoiceId) {
         formDataPayload.append('invoiceId', data.invoiceId);
     }
     formDataPayload.append('vendor', data.vendor);
-    formDataPayload.append('invoiceDate', data.date);
+    formDataPayload.append('invoiceDate', data.date); // Ensure this is 'invoiceDate' as expected by server
     formDataPayload.append('total', data.total.toString());
     data.lineItems.forEach((item, index) => {
       formDataPayload.append(`lineItems[${index}].description`, item.description);
@@ -138,28 +174,8 @@ export function ManualInvoiceForm({
     formDataPayload.append('isMonthlyRecurring', data.isMonthlyRecurring ? 'true' : 'false');
     formDataPayload.append('categoriesString', data.categoriesString || '');
 
-
     React.startTransition(() => {
-      serverAction(formDataPayload).then(actionResult => {
-        if (actionResult?.error) {
-          toast({
-            title: mode === 'edit' ? 'Update Failed' : 'Save Failed',
-            description: actionResult.error,
-            variant: 'destructive',
-          });
-        }
-        if (actionResult?.invoice) {
-          toast({
-            title: mode === 'edit' ? 'Invoice Updated' : 'Invoice Saved',
-            description: actionResult.message || `${actionResult.invoice.vendor} details saved.`,
-            variant: 'default',
-          });
-          if (onFormSuccess) {
-            onFormSuccess(actionResult.invoice);
-          }
-          onOpenChange(false);
-        }
-      });
+      serverActionDispatch(formDataPayload);
     });
   };
 
@@ -176,7 +192,7 @@ export function ManualInvoiceForm({
   return (
     <Dialog open={isOpen} onOpenChange={
         (open) => {
-            if(!open && mode === 'create') { // Reset create form on close if it wasn't submitted
+            if(!open && mode === 'create' && !actionState?.invoice) { // Reset create form on close if it wasn't successfully submitted
                  reset({
                     userId: userId,
                     invoiceId: undefined,
@@ -209,7 +225,7 @@ export function ManualInvoiceForm({
               <div>
                 <Label htmlFor="vendor">Vendor Name</Label>
                 <Input id="vendor" {...register('vendor')} placeholder="e.g., Netflix, AWS" />
-                {errors.vendor && <p className="text-sm text-destructive mt-1">{errors.vendor.message}</p>}
+                {rhfErrors.vendor && <p className="text-sm text-destructive mt-1">{rhfErrors.vendor.message}</p>}
               </div>
 
               <div>
@@ -242,7 +258,7 @@ export function ManualInvoiceForm({
                         </Popover>
                     )}
                     />
-                {errors.date && <p className="text-sm text-destructive mt-1">{errors.date.message}</p>}
+                {rhfErrors.date && <p className="text-sm text-destructive mt-1">{rhfErrors.date.message}</p>}
               </div>
 
               <div className="flex items-center space-x-2">
@@ -260,10 +276,9 @@ export function ManualInvoiceForm({
                 <Label htmlFor="isMonthlyRecurring" className="text-sm font-normal cursor-pointer">
                     This is a recurring monthly expense
                 </Label>
-                 {errors.isMonthlyRecurring && <p className="text-sm text-destructive mt-1">{errors.isMonthlyRecurring.message}</p>}
+                 {rhfErrors.isMonthlyRecurring && <p className="text-sm text-destructive mt-1">{rhfErrors.isMonthlyRecurring.message}</p>}
               </div>
-
-              {/* Categories Input Field */}
+              
               <div>
                 <Label htmlFor="categoriesString">Categories (comma-separated)</Label>
                 <Input
@@ -275,8 +290,9 @@ export function ManualInvoiceForm({
                 <p className="text-xs text-muted-foreground mt-1">
                   Leave empty to let AI suggest categories.
                 </p>
-                {errors.categoriesString && <p className="text-sm text-destructive mt-1">{errors.categoriesString.message}</p>}
+                {rhfErrors.categoriesString && <p className="text-sm text-destructive mt-1">{rhfErrors.categoriesString.message}</p>}
               </div>
+
 
               <Card>
                 <CardHeader>
@@ -292,8 +308,8 @@ export function ManualInvoiceForm({
                             placeholder="Item description"
                             className="text-sm"
                         />
-                        {errors.lineItems?.[index]?.description && (
-                            <p className="text-xs text-destructive">{errors.lineItems[index]?.description?.message}</p>
+                        {rhfErrors.lineItems?.[index]?.description && (
+                            <p className="text-xs text-destructive">{rhfErrors.lineItems[index]?.description?.message}</p>
                         )}
                         </div>
                         <div className="w-1/3 space-y-1 relative flex items-center">
@@ -304,10 +320,10 @@ export function ManualInvoiceForm({
                                 step="0.01"
                                 {...register(`lineItems.${index}.amount`, { valueAsNumber: true })}
                                 placeholder="Amount"
-                                className="text-sm pl-7" // Added pl-7 for DollarSign
+                                className="text-sm pl-7"
                             />
-                        {errors.lineItems?.[index]?.amount && (
-                            <p className="text-xs text-destructive">{errors.lineItems[index]?.amount?.message}</p>
+                        {rhfErrors.lineItems?.[index]?.amount && (
+                            <p className="text-xs text-destructive">{rhfErrors.lineItems[index]?.amount?.message}</p>
                         )}
                         </div>
                         <Button
@@ -331,8 +347,9 @@ export function ManualInvoiceForm({
                     >
                     <PlusCircle className="mr-2 h-4 w-4" /> Add Line Item
                     </Button>
-                    {errors.lineItems && typeof errors.lineItems === 'object' && 'message' in errors.lineItems && (
-                        <p className="text-sm text-destructive mt-1">{errors.lineItems.message}</p>
+                    {rhfErrors.lineItems && typeof rhfErrors.lineItems === 'object' && 'message' in rhfErrors.lineItems && (
+                        // @ts-ignore TODO: fix this type error for general message
+                        <p className="text-sm text-destructive mt-1">{rhfErrors.lineItems.message}</p>
                     )}
                 </CardContent>
               </Card>
@@ -347,11 +364,11 @@ export function ManualInvoiceForm({
                       step="0.01"
                       {...register('total', { valueAsNumber: true })}
                       placeholder="0.00"
-                      className="font-semibold pl-7" // Added pl-7 for DollarSign
+                      className="font-semibold pl-7"
                       readOnly 
                   />
                 </div>
-                {errors.total && <p className="text-sm text-destructive mt-1">{errors.total.message}</p>}
+                {rhfErrors.total && <p className="text-sm text-destructive mt-1">{rhfErrors.total.message}</p>}
               </div>
 
             </div>
@@ -359,7 +376,7 @@ export function ManualInvoiceForm({
           <DialogFooter className="pt-6">
             <DialogClose asChild>
                 <Button type="button" variant="outline" onClick={() => {
-                    onOpenChange(false);
+                    onOpenChange(false); // Resetting form is handled by useEffect on isOpen change now
                     }}>Cancel</Button>
             </DialogClose>
             <Button type="submit" disabled={isFormSubmitting}>
@@ -381,4 +398,3 @@ export function ManualInvoiceForm({
     </Dialog>
   );
 }
-

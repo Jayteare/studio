@@ -1,12 +1,12 @@
 
 "use client";
 
-import { useState, useEffect, useCallback, FormEvent } from 'react';
+import { useState, useEffect, useCallback, FormEvent, useActionState } from 'react';
 import { useAuth } from '@/hooks/use-auth';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { InvoiceUploadForm } from '@/components/invoice-upload-form';
-import { ManualInvoiceForm } from '@/components/manual-invoice-form';
+import { ManualInvoiceForm, type ManualInvoiceFormProps } from '@/components/manual-invoice-form';
 import { InvoiceList } from '@/components/invoice-list';
 import type { Invoice } from '@/types/invoice';
 import { Button } from '@/components/ui/button';
@@ -15,7 +15,16 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Loader2, LogOut, Search, XCircle, PlusCircle, BarChartHorizontalBig } from 'lucide-react';
 import { AppLogo } from '@/components/app-logo';
 import { Separator } from '@/components/ui/separator';
-import { fetchUserInvoices, softDeleteInvoice, searchInvoices, type FetchInvoicesResponse, type SoftDeleteResponse, type SearchInvoicesResponse } from './actions';
+import { 
+    fetchUserInvoices, 
+    softDeleteInvoice, 
+    searchInvoices, 
+    handleManualInvoiceEntry, // Import the server action
+    type FetchInvoicesResponse, 
+    type SoftDeleteResponse, 
+    type SearchInvoicesResponse,
+    type ManualInvoiceFormState // Import the state type
+} from './actions';
 import { useToast } from '@/hooks/use-toast';
 import {
   AlertDialog,
@@ -42,6 +51,12 @@ export default function DashboardPage() {
   const [invoiceToDelete, setInvoiceToDelete] = useState<Invoice | null>(null);
 
   const [isManualInvoiceFormOpen, setIsManualInvoiceFormOpen] = useState(false);
+
+  // useActionState for manual invoice entry (create mode)
+  const [manualFormState, manualFormActionDispatch, isManualFormPending] = useActionState(
+    handleManualInvoiceEntry,
+    undefined as ManualInvoiceFormState | undefined
+  );
 
 
   useEffect(() => {
@@ -74,16 +89,15 @@ export default function DashboardPage() {
 
 
   useEffect(() => {
-    // Load all invoices initially or if search query is cleared
     if (!searchQuery) {
         loadInvoices();
     }
-  }, [loadInvoices, searchQuery]); // Rerun if searchQuery becomes empty
+  }, [loadInvoices, searchQuery]); 
 
   const handleSearchSubmit = async (e?: FormEvent) => {
     e?.preventDefault();
     if (!searchQuery.trim()) {
-      loadInvoices(); // If search is empty, load all invoices
+      loadInvoices(); 
       return;
     }
     if (!user?.id) return;
@@ -115,12 +129,9 @@ export default function DashboardPage() {
 
   const clearSearch = () => {
     setSearchQuery('');
-    // useEffect will trigger loadInvoices
   };
 
   const handleNewInvoiceAdded = useCallback((newInvoice: Invoice) => {
-    // If currently searching, a new upload might not fit search criteria.
-    // Simplest is to reload all or add to top if not searching.
     if (searchQuery) {
          setInvoices((prevInvoices) => [newInvoice, ...prevInvoices].sort((a,b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime()));
          toast({
@@ -248,9 +259,13 @@ export default function DashboardPage() {
           {isManualInvoiceFormOpen && user?.id && (
             <ManualInvoiceForm
                 userId={user.id}
-                onInvoiceAdded={handleNewInvoiceAdded}
+                mode="create"
+                onFormSuccess={handleNewInvoiceAdded}
                 isOpen={isManualInvoiceFormOpen}
                 onOpenChange={setIsManualInvoiceFormOpen}
+                serverActionDispatch={manualFormActionDispatch}
+                isActionPending={isManualFormPending}
+                actionState={manualFormState}
             />
           )}
           

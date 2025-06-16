@@ -42,10 +42,8 @@ export default function InvoiceDetailPage() {
 
   const invoiceId = Array.isArray(params.invoiceId) ? params.invoiceId[0] : params.invoiceId;
 
-  // Action state for updating the invoice
-  const [updateFormState, updateInvoiceAction, isUpdatePending] = useActionState(
-    // Bind the invoiceId to the server action if it exists
-    invoiceId ? handleUpdateInvoice.bind(null, invoiceId) : async () => ({ error: "Invoice ID missing" }), 
+  const [updateFormState, updateInvoiceActionDispatch, isUpdatePending] = useActionState(
+    invoiceId ? handleUpdateInvoice.bind(null, invoiceId) : async (_prevState: unknown, _formData: FormData) => ({ error: "Invoice ID missing" }), 
     undefined as UpdateInvoiceFormState | undefined
   );
 
@@ -140,25 +138,24 @@ export default function InvoiceDetailPage() {
   };
 
   const handleEditSuccess = (updatedInvoice: Invoice) => {
-    setInvoice(updatedInvoice); // Update the local state for immediate reflection
+    setInvoice(updatedInvoice); 
     setIsEditDialogOpen(false);
-    // Optionally, trigger a full reload of similar invoices if content changed significantly
-    // loadSimilarInvoices(); 
-    // The toast for success is handled within ManualInvoiceForm via serverAction result
+    // Similar invoices might need reloading if summary changed significantly
+    if (invoice?.summary !== updatedInvoice.summary) {
+        loadSimilarInvoices();
+    }
   };
 
 
   const formatDate = (dateString?: string) => {
     if (!dateString) return 'N/A';
     try {
-      let date = parseISO(dateString); // Use parseISO for reliability with ISO strings
+      let date = parseISO(dateString); 
       if (isNaN(date.getTime())) {
-         // Fallback for non-ISO simple dates, e.g. YYYY-MM-DD from calendar picker
         const parts = dateString.match(/(\d{4})-(\d{2})-(\d{2})/);
         if (parts) {
             date = new Date(parseInt(parts[1]), parseInt(parts[2]) - 1, parseInt(parts[3]));
         } else {
-            // Further fallback for MM/DD/YYYY or other common formats if necessary
              const commonFormatParts = dateString.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
              if (commonFormatParts) {
                 let year = parseInt(commonFormatParts[3], 10);
@@ -175,9 +172,7 @@ export default function InvoiceDetailPage() {
         return dateString;
       }
       
-      // For full datetime strings (like uploadedAt), 'PPP p' is fine
-      // For date-only strings, 'PPP' is better
-      if (dateString.length === 10 && dateString.includes('-')) { // Likely YYYY-MM-DD
+      if (dateString.length === 10 && dateString.includes('-')) { 
         return format(date, 'PPP');
       }
       return format(date, 'PPP p');
@@ -450,8 +445,9 @@ export default function InvoiceDetailPage() {
                 invoiceToEdit={invoice}
                 isOpen={isEditDialogOpen}
                 onOpenChange={setIsEditDialogOpen}
-                serverAction={updateInvoiceAction}
+                serverActionDispatch={updateInvoiceActionDispatch}
                 isActionPending={isUpdatePending}
+                actionState={updateFormState}
                 onFormSuccess={handleEditSuccess}
             />
         )}
