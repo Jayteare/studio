@@ -375,8 +375,10 @@ export async function handleManualInvoiceEntry(
   const { userId, vendor, date, total, lineItems, isMonthlyRecurring, categoriesString } = validatedFields.data;
   let finalCategories: string[] = [];
 
-  if (categoriesString && categoriesString.trim() !== '') {
-    finalCategories = categoriesString.split(',').map(s => s.trim()).filter(s => s !== '');
+  const userProvidedCategories = (categoriesString || '').split(',').map(s => s.trim()).filter(s => s.length > 0);
+
+  if (userProvidedCategories.length > 0) {
+    finalCategories = userProvidedCategories;
   } else {
     // Call AI for categories if user didn't provide any
     try {
@@ -494,7 +496,7 @@ export async function handleUpdateInvoice(
     total: formData.get('total') as string,
     lineItems: [] as { description: string; amount: string }[],
     isMonthlyRecurring: formData.get('isMonthlyRecurring') === 'true',
-    categoriesString: formData.get('categoriesString') as string | null, // Get categories string
+    categoriesString: formData.get('categoriesString') as string | null,
   };
 
   if (invoiceIdToUpdate !== rawFormData.invoiceId) {
@@ -521,7 +523,7 @@ export async function handleUpdateInvoice(
       amount: parseFloat(li.amount),
     })),
     isMonthlyRecurring: rawFormData.isMonthlyRecurring,
-    categoriesString: rawFormData.categoriesString || '', // Pass to schema
+    categoriesString: rawFormData.categoriesString || '', 
   });
 
   if (!validatedFields.success) {
@@ -546,58 +548,32 @@ export async function handleUpdateInvoice(
       return { error: "Invoice not found or user not authorized to update." };
     }
 
-    // AI Re-processing for summary and recurrence
-    const summaryInput: SummarizeInvoiceInput = { vendor, date, total, lineItems };
-    const summarizedData = await summarizeInvoice(summaryInput);
-
-    // Categories - User's input is authoritative. No AI for categories on edit.
+    // Categories are taken directly from user input
     const updatedCategories = (categoriesString || '')
         .split(',')
         .map(s => s.trim())
         .filter(s => s.length > 0);
-    // If categoriesString is empty or only commas, updatedCategories will be an empty array.
 
-    let recurrenceInfo: DetectRecurrenceOutput = { isLikelyRecurring: false };
-    if (isMonthlyRecurring) {
-      recurrenceInfo = { isLikelyRecurring: true, reasoning: "User marked as monthly recurring." };
-    } else {
-      try {
-        const recurrenceInput: DetectRecurrenceInput = { vendor, lineItems };
-        recurrenceInfo = await detectRecurrence(recurrenceInput);
-      } catch (recError: any) {
-        console.warn('Failed to re-detect recurrence for edited invoice:', recError.message);
-        recurrenceInfo = { isLikelyRecurring: existingInvoice.isLikelyRecurring || false, reasoning: existingInvoice.recurrenceReasoning }; // Fallback
-      }
-    }
-
-    let summaryEmbedding: number[] | undefined = undefined;
-    if (summarizedData.summary) {
-      try {
-        const embeddingResponse = await ai.embed({ content: summarizedData.summary });
-        if (embeddingResponse?.embedding?.length) {
-          summaryEmbedding = embeddingResponse.embedding;
-        } else {
-          console.warn('Failed to re-generate summary embedding for edited invoice.');
-        }
-      } catch (embeddingError: any) {
-        console.warn('Failed to re-generate summary embedding for edited invoice:', embeddingError.message);
-      }
-    }
+    // Recurrence is taken directly from user input
+    const updatedIsLikelyRecurring = isMonthlyRecurring;
+    const updatedRecurrenceReasoning = isMonthlyRecurring 
+        ? "User marked as monthly recurring." 
+        : "User marked as not monthly recurring.";
     
-    // Retain original fileName and gcsFileUri for uploaded invoices
+    // Retain original fileName for uploaded invoices, update for manual entries if vendor/date changed.
+    // Summary and SummaryEmbedding are NOT updated during edit.
     const fileName = existingInvoice.gcsFileUri ? existingInvoice.fileName : `Manual - ${vendor} - ${new Date(date).toISOString().split('T')[0]}.json`;
 
-    const updateData = {
+    const updateData: Partial<Invoice> & { vendor: string; date: string; total: number; lineItems: LineItem[] } = {
       vendor,
       date,
       total,
       lineItems,
-      summary: summarizedData.summary,
-      summaryEmbedding: summaryEmbedding || null, 
-      categories: updatedCategories, // Use parsed user input
-      isLikelyRecurring: recurrenceInfo.isLikelyRecurring,
-      recurrenceReasoning: recurrenceInfo.reasoning,
-      fileName, 
+      categories: updatedCategories,
+      isLikelyRecurring: updatedIsLikelyRecurring,
+      recurrenceReasoning: updatedRecurrenceReasoning,
+      fileName,
+      // summary and summaryEmbedding are intentionally omitted to preserve their original values
     };
 
     const updateResult = await db.collection(INVOICES_COLLECTION).updateOne(
@@ -609,8 +585,12 @@ export async function handleUpdateInvoice(
       return { error: 'Invoice not found or user not authorized to update.' };
     }
     if (updateResult.modifiedCount === 0 && updateResult.matchedCount === 1) {
-       const unchangedInvoice = mapDocumentToInvoice({ ...existingInvoice, ...updateData });
-       return { invoice: unchangedInvoice, message: 'Invoice details are already up to date.' };
+       // Fetch the document again to ensure correct mapping, even if no fields were technically "modified"
+       // according to MongoDB (e.g. if setting an array to an identical array).
+       const currentDoc = await db.collection(INVOICES_COLLECTION).findOne({ _id: mongoInvoiceId });
+       if (!currentDoc) return { error: "Failed to retrieve invoice details after attempted update."};
+       const unchangedInvoice = mapDocumentToInvoice(currentDoc);
+       return { invoice: unchangedInvoice, message: 'Invoice details are already up to date or no effective change was made.' };
     }
 
     const updatedDoc = await db.collection(INVOICES_COLLECTION).findOne({ _id: mongoInvoiceId });
@@ -1111,11 +1091,12 @@ export async function toggleInvoiceRecurrence(invoiceId: string, userId: string)
             return { error: 'Invoice not found or user not authorized.' };
         }
         if (updateResult.modifiedCount === 0) {
-            if (currentInvoiceDoc.isLikelyRecurring === newIsLikelyRecurring && currentInvoiceDoc.recurrenceReasoning === newReasoning) {
-                const updatedInvoice = mapDocumentToInvoice({ ...currentInvoiceDoc, isLikelyRecurring: newIsLikelyRecurring, recurrenceReasoning: newReasoning });
-                return { invoice: updatedInvoice }; 
-            }
-            return { error: 'Invoice recurrence status was not changed.' };
+            // If no modification happened, it might be because the state was already as intended.
+            // Re-fetch to ensure the client gets the definitive current state.
+            const refreshedDoc = await db.collection(INVOICES_COLLECTION).findOne({ _id: currentInvoiceObjectId });
+            if (!refreshedDoc) return { error: "Failed to retrieve invoice details after toggle."};
+            const invoiceToReturn = mapDocumentToInvoice(refreshedDoc);
+            return { invoice: invoiceToReturn };
         }
         
         const updatedDoc = await db.collection(INVOICES_COLLECTION).findOne({ _id: currentInvoiceObjectId });
@@ -1134,3 +1115,5 @@ export async function toggleInvoiceRecurrence(invoiceId: string, userId: string)
         return { error: errorMessage };
     }
 }
+
+
