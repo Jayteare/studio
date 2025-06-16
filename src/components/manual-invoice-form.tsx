@@ -152,12 +152,12 @@ export function ManualInvoiceForm({
 
   useEffect(() => {
     const newTotal = lineItems.reduce((sum, item) => {
-      const itemAmount = parseFloat(String(item.amount)); // Ensure amount is string then parse
-      return sum + (isNaN(itemAmount) ? 0 : itemAmount);
+      // item.amount should be a number due to valueAsNumber: true or Zod coercion for 'amount' field
+      const itemAmount = typeof item.amount === 'number' && !isNaN(item.amount) ? item.amount : 0;
+      return sum + itemAmount;
     }, 0);
-    // Set total, ensuring it's a number, and explicitly prevent validation during this update.
-    // Using Number(newTotal.toFixed(2)) to handle potential floating point inaccuracies.
-    setValue('total', Number(newTotal.toFixed(2)), { shouldValidate: false, shouldDirty: true });
+    // Explicitly convert to number, fix to 2 decimal places for currency, and manage RHF update options.
+    setValue('total', Number(newTotal.toFixed(2)), { shouldValidate: false, shouldDirty: true, shouldTouch: false });
   }, [lineItems, setValue]);
 
 
@@ -480,5 +480,6 @@ export function ManualInvoiceForm({
     
 
     
+
 
 
