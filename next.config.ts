@@ -1,7 +1,11 @@
 import type {NextConfig} from 'next';
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  experimental: {
+    serverActions: {
+      bodySizeLimit: '15mb', // Allow larger request bodies for file uploads
+    },
+  },
   typescript: {
     ignoreBuildErrors: true,
   },
