@@ -2,7 +2,6 @@
 "use client";
 
 import Link from 'next/link';
-import Image from 'next/image';
 import { AppLogo } from '@/components/app-logo';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -52,15 +51,15 @@ export default function LandingPage() {
       <main className="flex-1">
         <section className="py-16 md:py-24 lg:py-32 bg-gradient-to-b from-background to-muted/30">
           <div className="container mx-auto max-w-screen-xl px-4 sm:px-6 lg:px-8">
-            <div className="grid grid-cols-1 items-center gap-12 lg:grid-cols-2">
-              <div className="text-center lg:text-left">
+            <div className="grid grid-cols-1 items-center gap-12">
+              <div className="text-center">
                 <h1 className="font-headline text-4xl font-bold tracking-tight text-primary sm:text-5xl md:text-6xl">
                   Transform Your Invoices into Insights
                 </h1>
-                <p className="mt-6 text-lg leading-8 text-muted-foreground sm:max-w-md sm:mx-auto lg:mx-0">
+                <p className="mt-6 text-lg leading-8 text-muted-foreground sm:max-w-xl mx-auto">
                   Stop wrestling with manual data entry. Invoice Insights uses AI to automate invoice processing, categorize expenses, and unlock valuable financial clarity for your business.
                 </p>
-                <div className="mt-10 flex items-center justify-center gap-x-6 lg:justify-start">
+                <div className="mt-10 flex items-center justify-center gap-x-6">
                   <Button asChild size="lg" className="shadow-lg">
                     <Link href="/login?tab=register">Get Started Free</Link>
                   </Button>
@@ -68,16 +67,6 @@ export default function LandingPage() {
                     <Link href="#features">Learn More &rarr;</Link>
                   </Button>
                 </div>
-              </div>
-              <div className="relative aspect-[16/10] lg:aspect-[4/3] rounded-xl shadow-2xl overflow-hidden">
-                <Image
-                  src="https://placehold.co/1200x900.png"
-                  alt="Invoice Insights Dashboard Preview"
-                  fill
-                  priority
-                  className="object-cover"
-                  data-ai-hint="dashboard interface"
-                />
               </div>
             </div>
           </div>
