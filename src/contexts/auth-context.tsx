@@ -41,21 +41,35 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   }, []);
 
   const handleAuthResponse = useCallback((response: AuthResponse, successRedirect: string = '/dashboard') => {
+    if (!response) { 
+      console.error('handleAuthResponse received a null or undefined response.');
+      toast({ title: 'Authentication Error', description: 'Received no response from the server.', variant: 'destructive' });
+      return false;
+    }
+
     if (response.error) {
       toast({ title: 'Authentication Failed', description: response.error, variant: 'destructive' });
       return false;
     }
-    if (response.user) {
+    
+    if (response.user && response.user.id) { 
       setUser(response.user);
       try {
         localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(response.user));
       } catch (error) {
         console.error("Error writing user to localStorage", error);
       }
-      toast({ title: 'Success', description: response.message || 'Action successful!', variant: 'default' });
+      toast({ title: 'Success!', description: response.message || 'Action successful!', variant: 'default' });
       router.push(successRedirect);
       return true;
     }
+    
+    console.warn('handleAuthResponse received a response without a clear error or user object:', response);
+    toast({ 
+        title: 'Authentication Issue', 
+        description: response.message || 'An unexpected issue occurred during authentication. Please try again.', 
+        variant: 'destructive' 
+    });
     return false;
   }, [router, toast]);
 
@@ -69,8 +83,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const register = useCallback(async (name: string, email: string, passwordInput: string) => {
     setIsLoading(true);
     const response = await registerUser(name, email, passwordInput);
-    // On successful registration, typically log the user in or redirect to login
-    // For this implementation, successful registration will log the user in.
     if (handleAuthResponse(response)) {
         // User is set and redirected by handleAuthResponse
     }
@@ -85,10 +97,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     } catch (error) {
       console.error("Error clearing user from localStorage", error);
     }
-    // Simulate any server-side logout if necessary (e.g., invalidating a token)
     await new Promise(resolve => setTimeout(resolve, 300)); 
     setIsLoading(false);
-    router.push('/landing'); // Changed from '/login' to '/landing'
+    router.push('/landing'); 
     toast({ title: 'Logged Out', description: 'You have been successfully logged out.' });
   }, [router, toast]);
 
@@ -100,3 +111,4 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     </AuthContext.Provider>
   );
 };
+
