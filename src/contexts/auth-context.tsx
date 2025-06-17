@@ -88,7 +88,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     // Simulate any server-side logout if necessary (e.g., invalidating a token)
     await new Promise(resolve => setTimeout(resolve, 300)); 
     setIsLoading(false);
-    router.push('/login');
+    router.push('/landing'); // Changed from '/login' to '/landing'
     toast({ title: 'Logged Out', description: 'You have been successfully logged out.' });
   }, [router, toast]);
 

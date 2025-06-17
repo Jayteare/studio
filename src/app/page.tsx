@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useEffect } from 'react';
@@ -14,7 +15,8 @@ export default function HomePage() {
       if (isAuthenticated) {
         router.replace('/dashboard');
       } else {
-        router.replace('/login');
+        // Redirect to the new landing page for unauthenticated users
+        router.replace('/landing');
       }
     }
   }, [isAuthenticated, isLoading, router]);

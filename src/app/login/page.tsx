@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '@/hooks/use-auth';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
@@ -11,10 +11,13 @@ import { Loader2, LogIn, UserPlus } from 'lucide-react';
 import { AppLogo } from '@/components/app-logo';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useToast } from '@/hooks/use-toast';
+import { useRouter, useSearchParams } from 'next/navigation';
 
 export default function LoginPage() {
-  const { login, register, isLoading: authLoading } = useAuth();
+  const { login, register, isLoading: authLoading, isAuthenticated } = useAuth();
   const { toast } = useToast();
+  const router = useRouter();
+  const searchParams = useSearchParams();
 
   // Common state
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -29,13 +32,29 @@ export default function LoginPage() {
   const [registerPassword, setRegisterPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   
-  const [activeTab, setActiveTab] = useState("login");
+  const initialTab = searchParams.get('tab') === 'register' ? 'register' : 'login';
+  const [activeTab, setActiveTab] = useState(initialTab);
+
+  useEffect(() => {
+    if (isAuthenticated && !authLoading) {
+      router.replace('/dashboard');
+    }
+  }, [isAuthenticated, authLoading, router]);
+  
+  useEffect(() => {
+    // Ensure tab reflects URL param if it changes
+    const currentUrlTab = searchParams.get('tab') === 'register' ? 'register' : 'login';
+    if (currentUrlTab !== activeTab) {
+      setActiveTab(currentUrlTab);
+    }
+  }, [searchParams, activeTab]);
+
 
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
     await login(loginEmail, loginPassword);
-    setIsSubmitting(false); // isLoading is handled by useAuth, submission state is local
+    setIsSubmitting(false); 
   };
 
   const handleRegisterSubmit = async (e: React.FormEvent) => {
@@ -46,10 +65,20 @@ export default function LoginPage() {
     }
     setIsSubmitting(true);
     await register(registerName, registerEmail, registerPassword);
-    setIsSubmitting(false); // isLoading is handled by useAuth
+    setIsSubmitting(false); 
   };
 
   const isLoading = authLoading || isSubmitting;
+
+  if (isAuthenticated && !authLoading) {
+    // This also handles cases where the user might navigate back to /login while authenticated
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center bg-background p-4">
+        <Loader2 className="h-12 w-12 animate-spin text-primary" />
+        <p className="mt-4 text-lg text-muted-foreground">Redirecting to dashboard...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-background p-4">
@@ -179,7 +208,7 @@ export default function LoginPage() {
         </Tabs>
         <CardFooter className="flex-col text-center text-sm mt-4">
           <p className="text-muted-foreground">
-            Connect with your MongoDB instance for authentication.
+            Invoice management made easy. Get started in minutes.
           </p>
         </CardFooter>
       </Card>
