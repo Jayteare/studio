@@ -152,11 +152,18 @@ export function ManualInvoiceForm({
 
   useEffect(() => {
     const newTotal = lineItems.reduce((sum, item) => {
-      // item.amount should be a number due to valueAsNumber: true or Zod coercion for 'amount' field
-      const itemAmount = typeof item.amount === 'number' && !isNaN(item.amount) ? item.amount : 0;
-      return sum + itemAmount;
+      const val = item.amount;
+      let numericAmount = 0;
+      if (typeof val === 'number' && !isNaN(val)) {
+        numericAmount = val;
+      } else if (typeof val === 'string') {
+        const parsed = parseFloat(val);
+        if (!isNaN(parsed)) {
+          numericAmount = parsed;
+        }
+      }
+      return sum + numericAmount;
     }, 0);
-    // Explicitly convert to number, fix to 2 decimal places for currency, and manage RHF update options.
     setValue('total', Number(newTotal.toFixed(2)), { shouldValidate: false, shouldDirty: true, shouldTouch: false });
   }, [lineItems, setValue]);
 
@@ -480,6 +487,7 @@ export function ManualInvoiceForm({
     
 
     
+
 
 
 
