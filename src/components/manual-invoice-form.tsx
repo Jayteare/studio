@@ -152,16 +152,17 @@ export function ManualInvoiceForm({
 
   useEffect(() => {
     const newTotal = lineItems.reduce((sum, item) => {
-      const val = item.amount;
       let numericAmount = 0;
-      if (typeof val === 'number' && !isNaN(val)) {
-        numericAmount = val;
-      } else if (typeof val === 'string') {
-        const parsed = parseFloat(val);
+      // Prioritize direct number, then attempt parseFloat if it's a string
+      if (typeof item.amount === 'number' && !isNaN(item.amount)) {
+        numericAmount = item.amount;
+      } else if (typeof item.amount === 'string') {
+        const parsed = parseFloat(item.amount); // parseFloat('') is NaN
         if (!isNaN(parsed)) {
           numericAmount = parsed;
         }
       }
+      // If item.amount was undefined or unparseable, numericAmount remains 0
       return sum + numericAmount;
     }, 0);
     setValue('total', Number(newTotal.toFixed(2)), { shouldValidate: false, shouldDirty: true, shouldTouch: false });
@@ -487,6 +488,7 @@ export function ManualInvoiceForm({
     
 
     
+
 
 
 
