@@ -15,13 +15,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Loader2, LogOut, Search, XCircle, PlusCircle, BarChartHorizontalBig, CalendarDays, CalendarIcon, FilterX } from 'lucide-react';
 import { AppLogo } from '@/components/app-logo';
 import { Separator } from '@/components/ui/separator';
-import { 
-    fetchUserInvoices, 
-    softDeleteInvoice, 
-    searchInvoices, 
+import {
+    fetchUserInvoices,
+    softDeleteInvoice,
+    searchInvoices,
     handleManualInvoiceEntry,
-    type FetchInvoicesResponse, 
-    type SoftDeleteResponse, 
+    type FetchInvoicesResponse,
+    type SoftDeleteResponse,
     type SearchInvoicesResponse,
     type ManualInvoiceFormState
 } from './actions';
@@ -46,7 +46,7 @@ export default function DashboardPage() {
   const { user, isAuthenticated, isLoading: authIsLoading, logout } = useAuth();
   const router = useRouter();
   const { toast } = useToast();
-  
+
   const [sourceInvoices, setSourceInvoices] = useState<Invoice[]>([]); // Raw invoices from fetch/search
   const [invoicesLoading, setInvoicesLoading] = useState(true);
   const [isSearching, setIsSearching] = useState(false);
@@ -83,7 +83,7 @@ export default function DashboardPage() {
   const loadInvoices = useCallback(async () => {
     if (isAuthenticated && user?.id) {
       setInvoicesLoading(true);
-      setIsSearching(false); 
+      setIsSearching(false);
       const response: FetchInvoicesResponse = await fetchUserInvoices(user.id);
       if (response.error) {
         toast({
@@ -106,27 +106,27 @@ export default function DashboardPage() {
     if (!searchQuery) {
         loadInvoices();
     }
-  }, [loadInvoices, searchQuery]); 
+  }, [loadInvoices, searchQuery]);
 
   const handleSearchSubmit = async (e?: FormEvent) => {
     e?.preventDefault();
     if (!searchQuery.trim()) {
-      loadInvoices(); 
+      loadInvoices();
       return;
     }
     if (!user?.id) return;
 
     setIsSearching(true);
-    setInvoicesLoading(true); 
+    setInvoicesLoading(true);
     const response: SearchInvoicesResponse = await searchInvoices(user.id, searchQuery);
-    
+
     if (response.error) {
       toast({
         title: 'Search Failed',
         description: response.error,
         variant: 'destructive',
       });
-      setSourceInvoices([]); 
+      setSourceInvoices([]);
     } else if (response.invoices) {
       setSourceInvoices(response.invoices);
       if (response.invoices.length === 0) {
@@ -149,15 +149,31 @@ export default function DashboardPage() {
   };
 
   const handleNewInvoiceAdded = useCallback((newInvoice: Invoice) => {
-    setSourceInvoices((prevInvoices) => [newInvoice, ...prevInvoices].sort((a,b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime()));
+    setSourceInvoices((prevInvoices) => {
+      const existingInvoiceIndex = prevInvoices.findIndex(inv => inv.id === newInvoice.id);
+      let updatedInvoices;
+
+      if (existingInvoiceIndex !== -1) {
+        // Invoice with the same ID exists, replace it
+        updatedInvoices = [...prevInvoices];
+        updatedInvoices[existingInvoiceIndex] = newInvoice;
+      } else {
+        // Invoice is new, add it to the beginning
+        updatedInvoices = [newInvoice, ...prevInvoices];
+      }
+      // Sort all invoices by uploadedAt date descending
+      return updatedInvoices.sort((a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime());
+    });
+
     if (searchQuery) {
          toast({
-            title: 'Invoice Added',
-            description: `${newInvoice.fileName} is added. Your current view might be filtered by search and other filters. Clear filters to see all.`,
+            title: 'Invoice Added/Updated',
+            description: `${newInvoice.fileName} processed. Your current view might be filtered. Clear filters to see all changes.`,
             variant: 'default'
          })
     }
   }, [searchQuery, toast]);
+
 
   const handleLogout = async () => {
     await logout();
@@ -205,6 +221,9 @@ export default function DashboardPage() {
           if (key === 'categories') {
             return invoice.categories?.some(cat => cat.toLowerCase().includes(filterValue)) ?? false;
           }
+           if (key === 'summary') {
+            return invoice.summary?.toLowerCase().includes(filterValue) ?? false;
+          }
           const invoiceValue = (invoice as any)[key]?.toString().toLowerCase() ?? '';
           return invoiceValue.includes(filterValue);
         });
@@ -215,11 +234,11 @@ export default function DashboardPage() {
     if (dateFilter.from || dateFilter.to) {
       filtered = filtered.filter(invoice => {
         if (!invoice.date) return false;
-        
+
         const dateParts = invoice.date.split('-').map(Number);
         if (dateParts.length !== 3 || dateParts.some(isNaN)) {
             console.warn(`Invalid date format for invoice ID ${invoice.id}: ${invoice.date}`);
-            return false; 
+            return false;
         }
         const invoiceDate = new Date(Date.UTC(dateParts[0], dateParts[1] - 1, dateParts[2]));
 
@@ -251,7 +270,7 @@ export default function DashboardPage() {
   };
 
 
-  if (authIsLoading && !user) { 
+  if (authIsLoading && !user) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center bg-background p-4">
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
@@ -259,8 +278,8 @@ export default function DashboardPage() {
       </div>
     );
   }
-  
-  if (!isAuthenticated || !user) { 
+
+  if (!isAuthenticated || !user) {
     return (
        <div className="flex min-h-screen flex-col items-center justify-center bg-background p-4">
         <p className="text-lg text-muted-foreground">Redirecting to login...</p>
@@ -291,9 +310,9 @@ export default function DashboardPage() {
 
         <main className="flex-1 container mx-auto max-w-screen-2xl p-4 md:p-8">
           <section className="mb-12 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8 items-stretch">
-            <InvoiceUploadForm 
-              onInvoiceUploaded={handleNewInvoiceAdded} 
-              userId={user.id} 
+            <InvoiceUploadForm
+              onInvoiceUploaded={handleNewInvoiceAdded}
+              userId={user.id}
             />
             <Card className="w-full shadow-lg flex flex-col">
                 <CardHeader>
@@ -348,7 +367,7 @@ export default function DashboardPage() {
                 </CardContent>
             </Card>
           </section>
-          
+
           {isManualInvoiceFormOpen && user?.id && (
             <ManualInvoiceForm
                 userId={user.id}
@@ -361,7 +380,7 @@ export default function DashboardPage() {
                 actionState={manualFormState}
             />
           )}
-          
+
           <Separator className="my-8" />
 
           <section>
@@ -371,11 +390,11 @@ export default function DashboardPage() {
                     <form onSubmit={handleSearchSubmit} className="flex gap-2 items-center md:col-span-2 lg:col-span-1">
                         <Input
                             type="search"
-                            placeholder="Search summaries..."
+                            placeholder="Search summaries, etc..."
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
                             className="flex-grow"
-                            aria-label="Search invoices"
+                            aria-label="Search invoices by keyword"
                         />
                         {searchQuery && (
                             <Button type="button" variant="ghost" size="icon" onClick={clearSearch} aria-label="Clear search" className="text-muted-foreground hover:text-foreground">
@@ -437,7 +456,7 @@ export default function DashboardPage() {
                         </PopoverContent>
                         </Popover>
                     </div>
-                    
+
                     {hasActiveFilters && (
                         <Button variant="outline" onClick={handleClearFilters} className="w-full md:w-auto lg:justify-self-start">
                             <FilterX className="mr-2 h-4 w-4" /> Clear All Filters
@@ -454,8 +473,8 @@ export default function DashboardPage() {
               </div>
             ) : (
               <div className="animate-in fade-in-0 duration-500">
-                <InvoiceList 
-                  invoices={displayedInvoices} 
+                <InvoiceList
+                  invoices={displayedInvoices}
                   onDeleteInvoice={openDeleteConfirmDialog}
                   currentColumnFilters={columnFilters}
                   onColumnFilterChange={handleColumnFilterChange}
@@ -494,4 +513,3 @@ export default function DashboardPage() {
     </>
   );
 }
-
