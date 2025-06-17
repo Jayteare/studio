@@ -18,7 +18,7 @@ function LoginFormComponent() {
   const { login, register, isLoading: authLoading } = useAuth();
   const { toast } = useToast();
   const searchParams = useSearchParams();
-  const router = useRouter(); // router can be used here if needed for post-action navigation not covered by AuthContext
+  const router = useRouter(); 
 
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -32,16 +32,27 @@ function LoginFormComponent() {
   const [registerPassword, setRegisterPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   
-  const initialTab = searchParams.get('tab') === 'register' ? 'register' : 'login';
-  const [activeTab, setActiveTab] = useState(initialTab);
+  // Initialize activeTab directly from searchParams
+  const initialTabFromUrl = searchParams.get('tab') === 'register' ? 'register' : 'login';
+  const [activeTab, setActiveTab] = useState(initialTabFromUrl);
 
+  // useEffect to handle external URL changes (e.g., browser back/forward buttons, or direct link)
   useEffect(() => {
-    // Ensure tab reflects URL param if it changes (e.g., browser back/forward)
-    const currentUrlTab = searchParams.get('tab') === 'register' ? 'register' : 'login';
-    if (currentUrlTab !== activeTab) {
-      setActiveTab(currentUrlTab);
+    const currentUrlTabValue = searchParams.get('tab');
+    const targetTab = currentUrlTabValue === 'register' ? 'register' : 'login';
+    if (targetTab !== activeTab) {
+      setActiveTab(targetTab);
     }
-  }, [searchParams, activeTab]);
+  }, [searchParams, activeTab]); // Re-check activeTab in case it was out of sync
+
+  const handleTabChange = (newTabValue: string) => {
+    setActiveTab(newTabValue); // Update React state
+    // Update URL, using replace to avoid too many history entries for simple tab clicks
+    const currentParams = new URLSearchParams(Array.from(searchParams.entries()));
+    currentParams.set('tab', newTabValue);
+    router.replace(`/login?${currentParams.toString()}`, { scroll: false });
+  };
+
 
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -64,7 +75,7 @@ function LoginFormComponent() {
   const isLoading = authLoading || isSubmitting;
 
   return (
-    <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+    <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
       <TabsList className="grid w-full grid-cols-2 mb-6">
         <TabsTrigger value="login">Sign In</TabsTrigger>
         <TabsTrigger value="register">Create Account</TabsTrigger>
@@ -225,3 +236,4 @@ export default function LoginPage() {
     </div>
   );
 }
+
