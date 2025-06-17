@@ -1,29 +1,29 @@
 
 "use client";
 
-import { useState, useEffect, useCallback, FormEvent, useActionState } from 'react';
+import { useState, useEffect, useCallback, FormEvent, useActionState, useMemo } from 'react';
 import { useAuth } from '@/hooks/use-auth';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { InvoiceUploadForm } from '@/components/invoice-upload-form';
-import { ManualInvoiceForm, type ManualInvoiceFormProps } from '@/components/manual-invoice-form';
+import { ManualInvoiceForm } from '@/components/manual-invoice-form';
 import { InvoiceList } from '@/components/invoice-list';
 import type { Invoice } from '@/types/invoice';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Loader2, LogOut, Search, XCircle, PlusCircle, BarChartHorizontalBig, CalendarDays } from 'lucide-react';
+import { Loader2, LogOut, Search, XCircle, PlusCircle, BarChartHorizontalBig, CalendarDays, CalendarIcon, FilterX } from 'lucide-react';
 import { AppLogo } from '@/components/app-logo';
 import { Separator } from '@/components/ui/separator';
 import { 
     fetchUserInvoices, 
     softDeleteInvoice, 
     searchInvoices, 
-    handleManualInvoiceEntry, // Import the server action
+    handleManualInvoiceEntry,
     type FetchInvoicesResponse, 
     type SoftDeleteResponse, 
     type SearchInvoicesResponse,
-    type ManualInvoiceFormState // Import the state type
+    type ManualInvoiceFormState
 } from './actions';
 import { useToast } from '@/hooks/use-toast';
 import {
@@ -36,28 +36,43 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
+import { format } from 'date-fns';
+import { cn } from '@/lib/utils';
+
 
 export default function DashboardPage() {
   const { user, isAuthenticated, isLoading: authIsLoading, logout } = useAuth();
   const router = useRouter();
   const { toast } = useToast();
   
-  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [sourceInvoices, setSourceInvoices] = useState<Invoice[]>([]); // Raw invoices from fetch/search
   const [invoicesLoading, setInvoicesLoading] = useState(true);
   const [isSearching, setIsSearching] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+
+  const [columnFilters, setColumnFilters] = useState<Record<string, string>>({
+    fileName: '',
+    vendor: '',
+    categories: '',
+    summary: '',
+  });
+
+  const [dateFilter, setDateFilter] = useState<{ from?: Date; to?: Date }>({
+    from: undefined,
+    to: undefined,
+  });
 
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [invoiceToDelete, setInvoiceToDelete] = useState<Invoice | null>(null);
 
   const [isManualInvoiceFormOpen, setIsManualInvoiceFormOpen] = useState(false);
 
-  // useActionState for manual invoice entry (create mode)
   const [manualFormState, manualFormActionDispatch, isManualFormPending] = useActionState(
     handleManualInvoiceEntry,
     undefined as ManualInvoiceFormState | undefined
   );
-
 
   useEffect(() => {
     if (!authIsLoading && !isAuthenticated) {
@@ -68,7 +83,7 @@ export default function DashboardPage() {
   const loadInvoices = useCallback(async () => {
     if (isAuthenticated && user?.id) {
       setInvoicesLoading(true);
-      setIsSearching(false); // Reset search state
+      setIsSearching(false); 
       const response: FetchInvoicesResponse = await fetchUserInvoices(user.id);
       if (response.error) {
         toast({
@@ -76,17 +91,16 @@ export default function DashboardPage() {
           description: response.error,
           variant: 'destructive',
         });
-        setInvoices([]);
+        setSourceInvoices([]);
       } else if (response.invoices) {
-        setInvoices(response.invoices);
+        setSourceInvoices(response.invoices);
       }
       setInvoicesLoading(false);
     } else if (!authIsLoading && !isAuthenticated) {
-      setInvoices([]);
+      setSourceInvoices([]);
       setInvoicesLoading(false);
     }
   }, [isAuthenticated, user?.id, authIsLoading, toast]);
-
 
   useEffect(() => {
     if (!searchQuery) {
@@ -112,9 +126,9 @@ export default function DashboardPage() {
         description: response.error,
         variant: 'destructive',
       });
-      setInvoices([]); 
+      setSourceInvoices([]); 
     } else if (response.invoices) {
-      setInvoices(response.invoices);
+      setSourceInvoices(response.invoices);
       if (response.invoices.length === 0) {
         toast({
           title: 'No Results',
@@ -123,24 +137,25 @@ export default function DashboardPage() {
         });
       }
     }
+    setColumnFilters({ fileName: '', vendor: '', categories: '', summary: '' }); // Reset column filters on new search
+    setDateFilter({ from: undefined, to: undefined }); // Reset date filter on new search
     setIsSearching(false);
     setInvoicesLoading(false);
   };
 
   const clearSearch = () => {
     setSearchQuery('');
+    // loadInvoices will be called by useEffect due to searchQuery change
   };
 
   const handleNewInvoiceAdded = useCallback((newInvoice: Invoice) => {
+    setSourceInvoices((prevInvoices) => [newInvoice, ...prevInvoices].sort((a,b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime()));
     if (searchQuery) {
-         setInvoices((prevInvoices) => [newInvoice, ...prevInvoices].sort((a,b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime()));
          toast({
             title: 'Invoice Added',
-            description: `${newInvoice.fileName} is added. Your current view might be filtered by search. Clear search to see all.`,
+            description: `${newInvoice.fileName} is added. Your current view might be filtered by search and other filters. Clear filters to see all.`,
             variant: 'default'
          })
-    } else {
-        setInvoices((prevInvoices) => [newInvoice, ...prevInvoices].sort((a,b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime()));
     }
   }, [searchQuery, toast]);
 
@@ -158,7 +173,7 @@ export default function DashboardPage() {
 
     const response: SoftDeleteResponse = await softDeleteInvoice(invoiceToDelete.id, user.id);
     if (response.success && response.deletedInvoiceId) {
-      setInvoices((prevInvoices) => prevInvoices.filter((inv) => inv.id !== response.deletedInvoiceId));
+      setSourceInvoices((prevInvoices) => prevInvoices.filter((inv) => inv.id !== response.deletedInvoiceId));
       toast({
         title: 'Invoice Deleted',
         description: `Invoice "${invoiceToDelete.fileName || invoiceToDelete.vendor}" has been moved to trash.`,
@@ -173,6 +188,66 @@ export default function DashboardPage() {
     }
     setIsDeleteDialogOpen(false);
     setInvoiceToDelete(null);
+  };
+
+  const handleColumnFilterChange = (columnId: string, value: string) => {
+    setColumnFilters(prev => ({ ...prev, [columnId]: value }));
+  };
+
+  const displayedInvoices = useMemo(() => {
+    let filtered = [...sourceInvoices]; // Start with a copy of source invoices
+
+    // Apply column filters
+    Object.entries(columnFilters).forEach(([key, val]) => {
+      if (val.length > 0) {
+        const filterValue = val.toLowerCase();
+        filtered = filtered.filter(invoice => {
+          if (key === 'categories') {
+            return invoice.categories?.some(cat => cat.toLowerCase().includes(filterValue)) ?? false;
+          }
+          const invoiceValue = (invoice as any)[key]?.toString().toLowerCase() ?? '';
+          return invoiceValue.includes(filterValue);
+        });
+      }
+    });
+
+    // Apply date filter
+    if (dateFilter.from || dateFilter.to) {
+      filtered = filtered.filter(invoice => {
+        if (!invoice.date) return false;
+        
+        const dateParts = invoice.date.split('-').map(Number);
+        if (dateParts.length !== 3 || dateParts.some(isNaN)) {
+            console.warn(`Invalid date format for invoice ID ${invoice.id}: ${invoice.date}`);
+            return false; 
+        }
+        const invoiceDate = new Date(Date.UTC(dateParts[0], dateParts[1] - 1, dateParts[2]));
+
+        let passesFrom = true;
+        if (dateFilter.from) {
+          const filterFromDate = new Date(Date.UTC(dateFilter.from.getFullYear(), dateFilter.from.getMonth(), dateFilter.from.getDate()));
+          passesFrom = invoiceDate.getTime() >= filterFromDate.getTime();
+        }
+
+        let passesTo = true;
+        if (dateFilter.to) {
+          const filterToDate = new Date(Date.UTC(dateFilter.to.getFullYear(), dateFilter.to.getMonth(), dateFilter.to.getDate()));
+          passesTo = invoiceDate.getTime() <= filterToDate.getTime();
+        }
+        return passesFrom && passesTo;
+      });
+    }
+
+    return filtered;
+  }, [sourceInvoices, columnFilters, dateFilter]);
+
+  const hasActiveColumnFilters = useMemo(() => Object.values(columnFilters).some(val => val.length > 0), [columnFilters]);
+  const hasActiveDateFilters = useMemo(() => !!dateFilter.from || !!dateFilter.to, [dateFilter]);
+  const hasActiveFilters = hasActiveColumnFilters || hasActiveDateFilters;
+
+  const handleClearFilters = () => {
+    setColumnFilters({ fileName: '', vendor: '', categories: '', summary: '' });
+    setDateFilter({ from: undefined, to: undefined });
   };
 
 
@@ -290,25 +365,87 @@ export default function DashboardPage() {
           <Separator className="my-8" />
 
           <section>
-            <form onSubmit={handleSearchSubmit} className="mb-8 flex gap-2 items-center">
-              <Input
-                type="search"
-                placeholder="Search invoice summaries (e.g., 'office supplies from ACME')"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="flex-grow"
-                aria-label="Search invoices"
-              />
-              {searchQuery && (
-                <Button type="button" variant="ghost" size="icon" onClick={clearSearch} aria-label="Clear search">
-                  <XCircle className="h-5 w-5" />
-                </Button>
-              )}
-              <Button type="submit" disabled={isSearching || invoicesLoading}>
-                {isSearching ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Search className="mr-2 h-4 w-4" />}
-                Search
-              </Button>
-            </form>
+            <div className="mb-6 p-4 border rounded-lg bg-card shadow">
+                <h3 className="text-lg font-semibold mb-4 text-card-foreground">Filter Invoices</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 items-end">
+                    <form onSubmit={handleSearchSubmit} className="flex gap-2 items-center md:col-span-2 lg:col-span-1">
+                        <Input
+                            type="search"
+                            placeholder="Search summaries..."
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            className="flex-grow"
+                            aria-label="Search invoices"
+                        />
+                        {searchQuery && (
+                            <Button type="button" variant="ghost" size="icon" onClick={clearSearch} aria-label="Clear search" className="text-muted-foreground hover:text-foreground">
+                            <XCircle className="h-5 w-5" />
+                            </Button>
+                        )}
+                        <Button type="submit" disabled={isSearching || invoicesLoading}>
+                            {isSearching ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Search className="mr-2 h-4 w-4" />}
+                            Search
+                        </Button>
+                    </form>
+
+                    <div className="flex gap-2 items-center">
+                        <Popover>
+                        <PopoverTrigger asChild>
+                            <Button
+                            variant={"outline"}
+                            className={cn(
+                                "w-full justify-start text-left font-normal",
+                                !dateFilter.from && "text-muted-foreground"
+                            )}
+                            >
+                            <CalendarIcon className="mr-2 h-4 w-4" />
+                            {dateFilter.from ? format(dateFilter.from, "PPP") : <span>From date</span>}
+                            </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-auto p-0" align="start">
+                            <Calendar
+                            mode="single"
+                            selected={dateFilter.from}
+                            onSelect={(day) => setDateFilter(prev => ({ ...prev, from: day || undefined }))}
+                            initialFocus
+                            />
+                        </PopoverContent>
+                        </Popover>
+                        <Popover>
+                        <PopoverTrigger asChild>
+                            <Button
+                            variant={"outline"}
+                            className={cn(
+                                "w-full justify-start text-left font-normal",
+                                !dateFilter.to && "text-muted-foreground"
+                            )}
+                            >
+                            <CalendarIcon className="mr-2 h-4 w-4" />
+                            {dateFilter.to ? format(dateFilter.to, "PPP") : <span>To date</span>}
+                            </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-auto p-0" align="start">
+                            <Calendar
+                            mode="single"
+                            selected={dateFilter.to}
+                            onSelect={(day) => setDateFilter(prev => ({ ...prev, to: day || undefined }))}
+                            disabled={(date) =>
+                                dateFilter.from ? date < dateFilter.from : false
+                            }
+                            initialFocus
+                            />
+                        </PopoverContent>
+                        </Popover>
+                    </div>
+                    
+                    {hasActiveFilters && (
+                        <Button variant="outline" onClick={handleClearFilters} className="w-full md:w-auto lg:justify-self-start">
+                            <FilterX className="mr-2 h-4 w-4" /> Clear All Filters
+                        </Button>
+                    )}
+                </div>
+            </div>
+
 
             {(invoicesLoading || isSearching) ? (
               <div className="flex flex-col items-center justify-center py-10">
@@ -318,8 +455,10 @@ export default function DashboardPage() {
             ) : (
               <div className="animate-in fade-in-0 duration-500">
                 <InvoiceList 
-                  invoices={invoices} 
-                  onDeleteInvoice={openDeleteConfirmDialog} 
+                  invoices={displayedInvoices} 
+                  onDeleteInvoice={openDeleteConfirmDialog}
+                  currentColumnFilters={columnFilters}
+                  onColumnFilterChange={handleColumnFilterChange}
                 />
               </div>
             )}
