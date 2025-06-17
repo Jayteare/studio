@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { ReceiptText } from 'lucide-react';
 
 interface AppLogoProps {
@@ -13,11 +14,11 @@ export function AppLogo({
   className = "" 
 }: AppLogoProps) {
   return (
-    <div className={`flex items-center gap-3 ${className}`}>
+    <Link href="/" className={`flex items-center gap-3 ${className}`} aria-label="Invoice Insights Home">
       <ReceiptText className={`${iconSizeClass} text-primary`} />
       <h1 className={`${textSizeClass} font-headline font-semibold text-primary`}>
         Invoice Insights
       </h1>
-    </div>
+    </Link>
   );
 }
